@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { isoDate } from "./dates.js";
 
 // 1. Create the server. name/version are sent to the client during `initialize`.
 const server = new McpServer({
@@ -39,18 +40,7 @@ server.registerTool(
       "for example how many days since they applied to a job or had an interview. " +
       "Input must be a YYYY-MM-DD date. Returns an error if the date is in the future.",
     inputSchema: {
-      date: z
-        .string()
-        .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid format. Must be YYYY-MM-DD")
-        .refine(
-          (val) => {
-            const d = new Date(val);
-            return (
-              !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === val
-            );
-          },
-          { message: "Not a real calendar date (e.g. 2026-02-30)" },
-        )
+      date: isoDate
         .transform((val) => new Date(val))
         .describe("A past date in YYYY-MM-DD format, e.g. 2026-09-01"),
       // TODO: one field called `date`
@@ -58,8 +48,10 @@ server.registerTool(
   },
   async ({ date }) => {
     const msInDay = 24 * 60 * 60 * 1000;
-    // const currentDay = Date.now();
-    const daysPassed = Math.floor((Date.now() - date.getTime()) / msInDay);
+    const now = new Date();
+    // Today's LOCAL calendar date, placed at midnight UTC, the same reference point as `date`.
+    const todayUtc = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+    const daysPassed = (todayUtc - date.getTime()) / msInDay;
     if (daysPassed < 0) {
       return {
         content: [
