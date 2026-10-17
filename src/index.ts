@@ -1,7 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { isoDate } from "./dates.js";
+import { isoDate, todayIso } from "./dates.js";
+import { addApplication, DuplicateApplicationError, STATUSES } from "./store.js";
 
 // 1. Create the server. name/version are sent to the client during `initialize`.
 const server = new McpServer({
@@ -43,7 +44,6 @@ server.registerTool(
       date: isoDate
         .transform((val) => new Date(val))
         .describe("A past date in YYYY-MM-DD format, e.g. 2026-09-01"),
-      // TODO: one field called `date`
     },
   },
   async ({ date }) => {
@@ -72,7 +72,69 @@ server.registerTool(
       ],
     };
 
-    // TODO: logic
+  },
+);
+
+server.registerTool(
+  "add_application",
+  {
+    title: "Add Job Application",
+    description:
+      "Save a new job application to the user's job-hunt tracker. " +
+      "Call this when the user says they applied to a job, or wants to track one they plan to apply to. " +
+      "Only include details the user actually gave; never invent a URL, date, or notes. " +
+      "If the company or role is unclear, ask the user before calling. " +
+      "Fails if an application for the same company and role already exists.",
+    inputSchema: {
+      company: z.string().trim().min(1).describe("Company name, e.g. Stripe"),
+      role: z.string().trim().min(1).describe("Job title, e.g. Backend Engineer"),
+      status: z
+        .enum(STATUSES)
+        .default("applied")
+        .describe("Current stage. Use 'wishlist' if they have not applied yet."),
+      appliedOn: isoDate
+        .optional()
+        .describe("Date they applied, YYYY-MM-DD. Omit if they applied today."),
+      url: z.url().optional().describe("Link to the job posting, if the user gave one"),
+      notes: z.string().optional().describe("Anything else the user mentioned, e.g. referral"),
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+  },
+  async ({ company, role, status, appliedOn, url, notes }) => {
+    try {
+      const app = await addApplication({
+        company,
+        role,
+        status,
+        appliedOn: appliedOn ?? (status === "applied" ? todayIso() : undefined),
+        url,
+        notes,
+      });
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              `Saved: ${app.role} at ${app.company} (status: ${app.status}` +
+              (app.appliedOn ? `, applied on ${app.appliedOn}` : "") +
+              `). id: ${app.id}`,
+          },
+        ],
+      };
+    } catch (err) {
+      if (err instanceof DuplicateApplicationError) {
+        return {
+          content: [{ type: "text", text: `${err.message} Not saved again.` }],
+          isError: true,
+        };
+      }
+      throw err; // unexpected (broken data file, disk error): let the SDK report it
+    }
   },
 );
 // 4. Connect over stdio: Claude Desktop launches this file as a child process
