@@ -6,16 +6,18 @@ import {
   getDefaultEnvironment,
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { todayIso } from "../src/dates.js";
+import { DatabaseSync } from "node:sqlite";   // add to imports
 
 type ToolResult = { content: Array<{ type: string; text?: string }>; isError?: boolean };
 
 // A fresh temp folder, so the real data/applications.json is never touched.
 const dir = await mkdtemp(path.join(tmpdir(), "jobhunt-smoke-"));
-const dataPath = path.join(dir, "applications.json");
+// const dataPath = path.join(dir, "applications.json");
+const dataPath = path.join(dir, "jobhunt.db");  // was "applications.json"
 
 const transport = new StdioClientTransport({
   command: process.execPath, // the same node.exe that runs this script
@@ -30,9 +32,15 @@ async function call(name: string, args: Record<string, unknown>): Promise<ToolRe
   return (await client.callTool({ name, arguments: args })) as ToolResult;
 }
 const textOf = (r: ToolResult) => r.content.map((c) => c.text ?? "").join("\n");
-const readApps = async () =>
-  JSON.parse(await readFile(dataPath, "utf8")) as Array<Record<string, unknown>>;
 
+const readApps = async () => {
+  const db = new DatabaseSync(dataPath, { readOnly: true });
+  try {
+    return db.prepare("SELECT * FROM applications").all() as Array<Record<string, unknown>>;
+  } finally {
+    db.close(); // Windows won't delete an open file, so close before the cleanup at the end
+  }
+};
 // Bad input can come back two ways: an isError result, or a thrown protocol error (-32602).
 async function expectRejected(name: string, args: Record<string, unknown>, pattern: RegExp) {
   let result: ToolResult;
