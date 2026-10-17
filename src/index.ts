@@ -84,7 +84,8 @@ server.registerTool(
       "Call this when the user says they applied to a job, or wants to track one they plan to apply to. " +
       "Only include details the user actually gave; never invent a URL, date, or notes. " +
       "If the company or role is unclear, ask the user before calling. " +
-      "Fails if an application for the same company and role already exists.",
+      "Fails if an application for the same company and role already exists. "+
+      "Do not use this to change an application that is already tracked.",
     inputSchema: {
       company: z.string().trim().min(1).describe("Company name, e.g. Stripe"),
       role: z.string().trim().min(1).describe("Job title, e.g. Backend Engineer"),
@@ -115,6 +116,7 @@ server.registerTool(
         url,
         notes,
       });
+      console.error(`add_application: saved ${app.company} / ${app.role} (id ${app.id})`);
       return {
         content: [
           {
@@ -128,11 +130,13 @@ server.registerTool(
       };
     } catch (err) {
       if (err instanceof DuplicateApplicationError) {
+        console.error(`add_application: duplicate rejected (${company} / ${role})`);
         return {
           content: [{ type: "text", text: `${err.message} Not saved again.` }],
           isError: true,
         };
       }
+      console.error("add_application: unexpected error", err);
       throw err; // unexpected (broken data file, disk error): let the SDK report it
     }
   },
