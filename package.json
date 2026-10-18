@@ -1,6 +1,6 @@
 {
   "name": "jobhunt-mcp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "MCP server exposing a job-application tracker to AI agents, with human-in-the-loop approval on writes",
   "main": "dist/index.js",
   "scripts": {

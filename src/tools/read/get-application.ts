@@ -42,17 +42,24 @@ export function registerGetApplication(server: McpServer) {
       }
 
       const events = await listEvents(app.id);
-      const history = events.map(
-        (e) =>
-          `- ${isoDay(e.occurred_at)}: ${e.from_status ?? "(created)"} -> ${e.to_status}` +
-          (e.note ? ` (${e.note})` : ""),
-      );
+      const history = events.map((e) => {
+        const what =
+          e.kind === "created" ? `created as ${e.to_status}`
+          : e.kind === "status_change" ? `${e.from_status} -> ${e.to_status}`
+          : e.kind === "updated" ? `edited ${Object.keys((e.details?.after as object) ?? {}).join(", ")}`
+          : "deleted";
+        return (
+          `- ${isoDay(e.occurred_at)}: ${what}` +
+          (e.note ? ` (${e.note})` : "") +
+          (e.actor ? ` [${e.actor}]` : "")
+        );
+      });
       return text(
         [
           applicationLine(app),
           app.url && `URL: ${app.url}`,
           app.notes && `Notes: ${app.notes}`,
-          "Status history:",
+          "History:",
           ...history,
         ]
           .filter(Boolean)

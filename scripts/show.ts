@@ -1,8 +1,11 @@
-// Print the tracker. Run from the project root:  npx tsx scripts/show.ts
-import { DatabaseSync } from "node:sqlite";
+// Print the tracker from Supabase. Run from the project root:  npm run show
+import { pool } from "../src/db/pool.js";
 
-const db = new DatabaseSync("data/jobhunt.db", { readOnly: true });
-console.table(
-  db.prepare("SELECT company, role, status, appliedOn FROM applications ORDER BY createdAt").all(),
+const { rows } = await pool.query(
+  `select c.name as company, a.role, a.status, a.applied_at
+     from applications a join companies c on c.id = a.company_id
+    where a.deleted_at is null
+    order by a.applied_at desc nulls last`,
 );
-db.close();
+console.table(rows);
+await pool.end();

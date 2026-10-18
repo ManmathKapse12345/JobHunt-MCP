@@ -14,6 +14,8 @@ const EnvSchema = z.object({
   DATABASE_URL: z
     .url()
     .refine((u) => /^postgres(ql)?:\/\//.test(u), "must start with postgresql://"),
+  // Port of the local approval page (http://127.0.0.1:<port>/approve/...). 0 = pick a free one.
+  APPROVAL_PORT: z.coerce.number().int().min(0).max(65535).default(4848),
 });
 
 const parsed = EnvSchema.safeParse(process.env);

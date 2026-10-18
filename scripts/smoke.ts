@@ -1,51 +1,71 @@
-// Smoke test: starts the built server like Claude Desktop does and calls every tool.
-// Run from the project root after `npm run build`:  npx tsx scripts/smoke.ts
+// Smoke test: starts the built server like Claude does and calls every tool, through
+// BOTH approval paths. Run from the project root:  npm run smoke
+//
+// It talks to the database in DATABASE_URL (your Supabase project, from .env). Every row
+// it creates belongs to a company named "zz Smoke Test <run id>" and is removed at the end.
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
   StdioClientTransport,
   getDefaultEnvironment,
 } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { ElicitRequestSchema, type ElicitResult } from "@modelcontextprotocol/sdk/types.js";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import http from "node:http";
+import { randomBytes } from "node:crypto";
 import { todayIso } from "../src/dates.js";
-import { DatabaseSync } from "node:sqlite";   // add to imports
+import { pool } from "../src/db/pool.js";
 
 type ToolResult = { content: Array<{ type: string; text?: string }>; isError?: boolean };
 
-// A fresh temp folder, so the real data/applications.json is never touched.
-const dir = await mkdtemp(path.join(tmpdir(), "jobhunt-smoke-"));
-// const dataPath = path.join(dir, "applications.json");
-const dataPath = path.join(dir, "jobhunt.db");  // was "applications.json"
+const RUN = randomBytes(3).toString("hex");
+const COMPANY = `zz Smoke Test ${RUN}`;
 
-const transport = new StdioClientTransport({
-  command: process.execPath, // the same node.exe that runs this script
-  args: ["dist/index.js"],
-  env: { ...getDefaultEnvironment(), JOBHUNT_DATA_PATH: dataPath },
+// ---------- two clients, two server processes ----------
+
+function serverEnv(): Record<string, string> {
+  return {
+    ...getDefaultEnvironment(),
+    APPROVAL_PORT: "0", // any free port, so tests never clash with Claude's running server
+    ...(process.env.DATABASE_URL ? { DATABASE_URL: process.env.DATABASE_URL } : {}),
+  };
+}
+
+async function connect(name: string, withElicitation: boolean): Promise<Client> {
+  const client = new Client(
+    { name, version: "0.0.1" },
+    { capabilities: withElicitation ? { elicitation: {} } : {} },
+  );
+  await client.connect(
+    new StdioClientTransport({ command: process.execPath, args: ["dist/index.js"], env: serverEnv() }),
+  );
+  return client;
+}
+
+// "elicit" plays a user answering the approval form; "plain" has no elicitation support.
+const elicit = await connect("smoke-elicit", true);
+const plain = await connect("smoke-plain", false);
+
+// What the fake user answers next, and every message they were shown.
+let nextAnswer: ElicitResult = { action: "decline" };
+const shown: string[] = [];
+elicit.setRequestHandler(ElicitRequestSchema, async (req) => {
+  shown.push(String(req.params.message));
+  return nextAnswer;
 });
-const client = new Client({ name: "smoke-test", version: "0.0.1" });
-await client.connect(transport);
+const ACCEPT: ElicitResult = { action: "accept", content: { approve: true } };
 
 // ---------- helpers ----------
-async function call(name: string, args: Record<string, unknown>): Promise<ToolResult> {
+
+async function call(client: Client, name: string, args: Record<string, unknown>): Promise<ToolResult> {
   return (await client.callTool({ name, arguments: args })) as ToolResult;
 }
 const textOf = (r: ToolResult) => r.content.map((c) => c.text ?? "").join("\n");
 
-const readApps = async () => {
-  const db = new DatabaseSync(dataPath, { readOnly: true });
-  try {
-    return db.prepare("SELECT * FROM applications").all() as Array<Record<string, unknown>>;
-  } finally {
-    db.close(); // Windows won't delete an open file, so close before the cleanup at the end
-  }
-};
 // Bad input can come back two ways: an isError result, or a thrown protocol error (-32602).
-async function expectRejected(name: string, args: Record<string, unknown>, pattern: RegExp) {
+async function expectRejected(client: Client, name: string, args: Record<string, unknown>, pattern: RegExp) {
   let result: ToolResult;
   try {
-    result = await call(name, args);
+    result = await call(client, name, args);
   } catch (e) {
     assert.match(String(e), pattern);
     return;
@@ -53,6 +73,63 @@ async function expectRejected(name: string, args: Record<string, unknown>, patte
   assert.ok(result.isError, `expected an error, got: ${textOf(result)}`);
   assert.match(textOf(result), pattern);
 }
+
+const idOf = (r: ToolResult) => /id ([0-9a-f-]{36})/.exec(textOf(r))?.[1] ?? assert.fail(textOf(r));
+const linkOf = (r: ToolResult) => /(http:\/\/127\.0\.0\.1:\d+\/approve\/\S+)/.exec(textOf(r))?.[1] ?? assert.fail(textOf(r));
+
+async function appRow(id: string) {
+  const { rows } = await pool.query(
+    "select status, notes, deleted_at, applied_at from applications where id = $1",
+    [id],
+  );
+  return rows[0];
+}
+async function lastEvent(id: string) {
+  const { rows } = await pool.query(
+    "select kind, from_status, to_status, actor, note, details from events where application_id = $1 order by occurred_at desc, kind desc limit 1",
+    [id],
+  );
+  return rows[0];
+}
+async function pendingOf(link: string) {
+  const id = new URL(link).pathname.split("/").pop();
+  const { rows } = await pool.query("select status, result, error from pending_actions where id = $1", [id]);
+  return rows[0];
+}
+
+// Raw HTTP, so tests can send headers (Host, Origin) the way a hostile page would.
+function request(
+  link: string,
+  opts: { method?: "GET" | "POST"; form?: Record<string, string>; headers?: Record<string, string> } = {},
+): Promise<{ status: number; body: string }> {
+  const url = new URL(link);
+  const body = opts.form ? new URLSearchParams(opts.form).toString() : undefined;
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        host: url.hostname,
+        port: url.port,
+        path: url.pathname + url.search,
+        method: opts.method ?? "GET",
+        headers: {
+          ...(body && { "Content-Type": "application/x-www-form-urlencoded" }),
+          ...opts.headers,
+        },
+      },
+      (res) => {
+        let data = "";
+        res.setEncoding("utf8");
+        res.on("data", (c: string) => (data += c));
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body: data }));
+      },
+    );
+    req.on("error", reject);
+    req.end(body);
+  });
+}
+const tokenOf = (link: string) => new URL(link).searchParams.get("token") ?? "";
+const decide = (link: string, decision: "approve" | "reject") =>
+  request(link.split("?")[0]!, { method: "POST", form: { token: tokenOf(link), decision } });
 
 let failures = 0;
 async function test(name: string, fn: () => Promise<void>) {
@@ -67,98 +144,182 @@ async function test(name: string, fn: () => Promise<void>) {
 
 // ---------- tests ----------
 try {
-  await test("lists all 7 tools, read tools marked read-only", async () => {
-    const { tools } = await client.listTools();
-    assert.deepEqual(tools.map((t) => t.name).sort(), [
+  await test("lists all 10 tools with the right annotations", async () => {
+    const { tools } = await plain.listTools();
+    const names = (pred: (t: (typeof tools)[number]) => boolean) =>
+      tools.filter(pred).map((t) => t.name).sort();
+    assert.deepEqual(names(() => true), [
       "add_application",
       "days_since",
+      "delete_application",
       "find_stale_applications",
       "get_application",
       "get_pipeline_summary",
       "list_applications",
       "ping",
+      "update_application",
+      "update_application_status",
     ]);
-    const readOnly = tools.filter((t) => t.annotations?.readOnlyHint).map((t) => t.name).sort();
-    assert.deepEqual(readOnly, [
+    assert.deepEqual(names((t) => t.annotations?.readOnlyHint === true), [
       "find_stale_applications",
       "get_application",
       "get_pipeline_summary",
       "list_applications",
     ]);
+    assert.deepEqual(names((t) => t.annotations?.destructiveHint === true), [
+      "delete_application",
+      "update_application",
+      "update_application_status",
+    ]);
   });
 
-  await test("adds a valid application and saves it to the file", async () => {
-    const r = await call("add_application", { company: "Stripe", role: "Backend Engineer" });
+  // ----- path 1: elicitation -----
+
+  let appId = "";
+  await test("elicitation accept: add_application saves the row and an audit event", async () => {
+    nextAnswer = ACCEPT;
+    const r = await call(elicit, "add_application", { company: COMPANY, role: "SDE", source: "smoke" });
     assert.ok(!r.isError, textOf(r));
-    assert.match(textOf(r), /^Saved: Backend Engineer at Stripe/);
-
-    const apps = await readApps();
-    assert.equal(apps.length, 1);
-    assert.equal(apps[0]?.status, "applied");
-    assert.equal(apps[0]?.appliedOn, todayIso()); // local date, not UTC
+    assert.match(textOf(r), /^The user approved\. Added "SDE" at zz Smoke Test/);
+    assert.match(shown.at(-1) ?? "", new RegExp(`Add a new application: "SDE" at ${COMPANY}`));
+    appId = idOf(r);
+    const row = await appRow(appId);
+    assert.equal(row.status, "applied");
+    assert.equal(row.applied_at, todayIso());
+    const ev = await lastEvent(appId);
+    assert.equal(ev.kind, "created");
+    assert.equal(ev.actor, "user via elicitation (smoke-elicit)");
   });
 
-  await test("rejects a duplicate (different case and spaces)", async () => {
-    await expectRejected(
-      "add_application",
-      { company: "  stripe ", role: "backend engineer" },
-      /Already tracking/,
-    );
-    assert.equal((await readApps()).length, 1, "duplicate must not be saved");
+  await test("duplicate add is refused before asking the user", async () => {
+    const asked = shown.length;
+    await expectRejected(elicit, "add_application", { company: ` ${COMPANY.toUpperCase()} `, role: "sde" }, /Already tracking/);
+    assert.equal(shown.length, asked, "the user must not be asked about an impossible change");
   });
 
-  await test("rejects an impossible date", async () => {
-    await expectRejected(
-      "add_application",
-      { company: "Acme", role: "SDE", appliedOn: "2026-02-30" },
-      /Not a real calendar date/,
-    );
+  await test("elicitation decline / unticked: nothing changes", async () => {
+    nextAnswer = { action: "decline" };
+    let r = await call(elicit, "update_application_status", { id: appId, status: "oa" });
+    assert.match(textOf(r), /did not approve \(decline\)\. Nothing was changed/);
+    nextAnswer = { action: "accept", content: { approve: false } };
+    r = await call(elicit, "update_application_status", { id: appId, status: "oa" });
+    assert.match(textOf(r), /did not approve \(left unticked\)/);
+    assert.equal((await appRow(appId)).status, "applied");
   });
 
-  await test("10 concurrent adds: no lost writes", async () => {
-    const companies = Array.from({ length: 10 }, (_, i) => `Company ${i}`);
-    const results = await Promise.all(
-      companies.map((company) => call("add_application", { company, role: "SDE" })),
-    );
-    assert.ok(results.every((r) => !r.isError), "every add should succeed");
-    assert.equal((await readApps()).length, 11, "1 Stripe + 10 new");
+  await test("elicitation accept: status change is logged with actor and note", async () => {
+    nextAnswer = ACCEPT;
+    const r = await call(elicit, "update_application_status", { id: appId, status: "oa", note: "OA mail" });
+    assert.match(textOf(r), /is now "oa"/);
+    assert.equal((await appRow(appId)).status, "oa");
+    const ev = await lastEvent(appId);
+    assert.deepEqual([ev.kind, ev.from_status, ev.to_status, ev.note], ["status_change", "applied", "oa", "OA mail"]);
+    assert.match(ev.actor, /elicitation/);
   });
 
-  await test("days_since still works", async () => {
-    assert.equal(textOf(await call("days_since", { date: todayIso() })), `0 days since ${todayIso()}`);
-    assert.match(textOf(await call("days_since", { date: "2026-09-01" })), /^\d+ days since 2026-09-01$/);
+  await test("update_application edits notes and audits before/after", async () => {
+    nextAnswer = ACCEPT;
+    const r = await call(elicit, "update_application", { id: appId, notes: "recruiter: Asha" });
+    assert.match(textOf(r), /Updated notes/);
+    assert.match(shown.at(-1) ?? "", /notes: \(empty\) -> "recruiter: Asha"/);
+    assert.equal((await appRow(appId)).notes, "recruiter: Asha");
+    const ev = await lastEvent(appId);
+    assert.equal(ev.kind, "updated");
+    assert.deepEqual(ev.details, { before: { notes: null }, after: { notes: "recruiter: Asha" } });
+    await expectRejected(elicit, "update_application", { id: appId, notes: "recruiter: Asha" }, /Nothing to change/);
   });
 
-  // The read tools query Supabase (DATABASE_URL in .env), so these only check
-  // that each query runs, not the exact rows.
-  await test("get_pipeline_summary reads from Supabase", async () => {
-    const r = await call("get_pipeline_summary", {});
+  // ----- path 2: approval link -----
+
+  await test("no elicitation: delete returns a link and changes nothing yet", async () => {
+    const r = await call(plain, "delete_application", { id: appId, reason: "smoke test" });
     assert.ok(!r.isError, textOf(r));
-    assert.match(textOf(r), /^Total tracked: \d+/);
+    assert.match(textOf(r), /Nothing has changed yet/);
+    const link = linkOf(r);
+    assert.equal((await appRow(appId)).deleted_at, null);
+    assert.equal((await pendingOf(link)).status, "pending");
+
+    const page = await request(link);
+    assert.equal(page.status, 200);
+    assert.match(page.body, /Approve this change\?/);
+    assert.match(page.body, /zz Smoke Test/);
+
+    // Guards: wrong token, foreign Host (DNS rebinding), foreign Origin (CSRF).
+    assert.equal((await request(link.replace(/token=.*/, "token=wrong"))).status, 404);
+    assert.equal((await request(link, { headers: { Host: "evil.example" } })).status, 403);
+    const csrf = await request(link.split("?")[0]!, {
+      method: "POST",
+      form: { token: tokenOf(link), decision: "approve" },
+      headers: { Origin: "http://evil.example" },
+    });
+    assert.equal(csrf.status, 403);
+    assert.equal((await appRow(appId)).deleted_at, null, "guards must not let anything through");
+
+    // The real click.
+    const done = await decide(link, "approve");
+    assert.match(done.body, /Approved/);
+    assert.notEqual((await appRow(appId)).deleted_at, null);
+    const ev = await lastEvent(appId);
+    assert.deepEqual([ev.kind, ev.actor, ev.note], ["deleted", "user via approval link", "smoke test"]);
+    const pending = await pendingOf(link);
+    assert.equal(pending.status, "approved");
+    assert.match(pending.result.message, /^Deleted/);
+
+    // A second click does nothing; the row is now invisible to read tools.
+    assert.match((await decide(link, "approve")).body, /Already decided/);
+    await expectRejected(plain, "get_application", { id: appId }, /No application with id/);
   });
 
-  await test("list_applications and find_stale_applications run", async () => {
+  await test("no elicitation: rejecting a link writes nothing", async () => {
+    const r = await call(plain, "add_application", { company: COMPANY, role: "Rejected Role" });
+    const link = linkOf(r);
+    assert.match((await decide(link, "reject")).body, /Rejected/);
+    assert.equal((await pendingOf(link)).status, "rejected");
+    const { rowCount } = await pool.query(
+      "select 1 from applications a join companies c on c.id = a.company_id where c.name = $1 and a.role = 'Rejected Role'",
+      [COMPANY],
+    );
+    assert.equal(rowCount, 0);
+  });
+
+  await test("a link approved after the data changed is refused, not applied", async () => {
+    nextAnswer = ACCEPT;
+    const id = idOf(await call(elicit, "add_application", { company: COMPANY, role: "Race" }));
+    const link = linkOf(await call(plain, "update_application_status", { id, status: "interview" }));
+    await call(elicit, "update_application_status", { id, status: "rejected" }); // meanwhile...
+    assert.match((await decide(link, "approve")).body, /Could not apply/);
+    assert.equal((await appRow(id)).status, "rejected");
+    const pending = await pendingOf(link);
+    assert.equal(pending.status, "approved");
+    assert.match(pending.error, /no longer "applied"/);
+  });
+
+  // ----- read + utility tools still work -----
+
+  await test("read tools and utilities", async () => {
+    assert.match(textOf(await call(plain, "get_pipeline_summary", {})), /^Total tracked: \d+/);
     for (const [name, args] of [
       ["list_applications", { limit: 5 }],
-      ["list_applications", { status: "rejected" }],
       ["find_stale_applications", { days: 14 }],
+      ["ping", {}],
     ] as const) {
-      const r = await call(name, args);
+      const r = await call(plain, name, args);
       assert.ok(!r.isError, `${name}: ${textOf(r)}`);
     }
-  });
-
-  await test("get_application needs an id or a company", async () => {
-    await expectRejected("get_application", {}, /Give either an id or a company name/);
-    await expectRejected("get_application", { company: "No Such Company Ltd" }, /No application found/);
-  });
-
-  await test("list_applications rejects an unknown status", async () => {
-    await expectRejected("list_applications", { status: "interviewing" }, /Invalid option/);
+    assert.equal(textOf(await call(plain, "days_since", { date: todayIso() })), `0 days since ${todayIso()}`);
+    await expectRejected(plain, "list_applications", { status: "interviewing" }, /Invalid option/);
+    await expectRejected(plain, "get_application", {}, /Give either an id or a company name/);
   });
 } finally {
-  await client.close(); // stops the server process
-  await rm(dir, { recursive: true, force: true }); // deletes the temp data
+  await Promise.all([elicit.close(), plain.close()]); // stops both server processes
+  // Remove everything this run created (test rows only: matched by the run's company name).
+  await pool.query("delete from pending_actions where summary like $1", [`%${COMPANY}%`]);
+  await pool.query(
+    "delete from applications where company_id in (select id from companies where name = $1)",
+    [COMPANY],
+  );
+  await pool.query("delete from companies where name = $1", [COMPANY]);
+  await pool.end();
 }
 
 console.log(failures ? `\n${failures} test(s) failed` : "\nAll tests passed");
