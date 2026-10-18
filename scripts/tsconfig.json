@@ -1,0 +1,10 @@
+{
+  // Type-checks scripts/ (run with tsx, never compiled). The root tsconfig only
+  // covers src/, so without this file editors see scripts/ with no Node types.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "noEmit": true
+  },
+  "include": ["*.ts", "../src/**/*.ts"]
+}

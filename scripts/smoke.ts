@@ -67,9 +67,24 @@ async function test(name: string, fn: () => Promise<void>) {
 
 // ---------- tests ----------
 try {
-  await test("lists exactly 3 tools", async () => {
+  await test("lists all 7 tools, read tools marked read-only", async () => {
     const { tools } = await client.listTools();
-    assert.deepEqual(tools.map((t) => t.name).sort(), ["add_application", "days_since", "ping"]);
+    assert.deepEqual(tools.map((t) => t.name).sort(), [
+      "add_application",
+      "days_since",
+      "find_stale_applications",
+      "get_application",
+      "get_pipeline_summary",
+      "list_applications",
+      "ping",
+    ]);
+    const readOnly = tools.filter((t) => t.annotations?.readOnlyHint).map((t) => t.name).sort();
+    assert.deepEqual(readOnly, [
+      "find_stale_applications",
+      "get_application",
+      "get_pipeline_summary",
+      "list_applications",
+    ]);
   });
 
   await test("adds a valid application and saves it to the file", async () => {
@@ -112,6 +127,34 @@ try {
   await test("days_since still works", async () => {
     assert.equal(textOf(await call("days_since", { date: todayIso() })), `0 days since ${todayIso()}`);
     assert.match(textOf(await call("days_since", { date: "2026-09-01" })), /^\d+ days since 2026-09-01$/);
+  });
+
+  // The read tools query Supabase (DATABASE_URL in .env), so these only check
+  // that each query runs, not the exact rows.
+  await test("get_pipeline_summary reads from Supabase", async () => {
+    const r = await call("get_pipeline_summary", {});
+    assert.ok(!r.isError, textOf(r));
+    assert.match(textOf(r), /^Total tracked: \d+/);
+  });
+
+  await test("list_applications and find_stale_applications run", async () => {
+    for (const [name, args] of [
+      ["list_applications", { limit: 5 }],
+      ["list_applications", { status: "rejected" }],
+      ["find_stale_applications", { days: 14 }],
+    ] as const) {
+      const r = await call(name, args);
+      assert.ok(!r.isError, `${name}: ${textOf(r)}`);
+    }
+  });
+
+  await test("get_application needs an id or a company", async () => {
+    await expectRejected("get_application", {}, /Give either an id or a company name/);
+    await expectRejected("get_application", { company: "No Such Company Ltd" }, /No application found/);
+  });
+
+  await test("list_applications rejects an unknown status", async () => {
+    await expectRejected("list_applications", { status: "interviewing" }, /Invalid option/);
   });
 } finally {
   await client.close(); // stops the server process
