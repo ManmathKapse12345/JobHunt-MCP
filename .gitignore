@@ -4,3 +4,5 @@ dist/
 *.log
 data/
 test-data/
+# personal job-search data
+supabase/seed.sql
