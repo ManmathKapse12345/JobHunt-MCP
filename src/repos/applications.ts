@@ -1,5 +1,5 @@
 import type pg from "pg";
-import { pool, type Db } from "../db/pool.js";
+import { readPool, type Db } from "../db/pool.js";
 
 // Must match the application_status enum in supabase/migrations/001_init.sql.
 export const APPLICATION_STATUSES = [
@@ -31,6 +31,10 @@ export interface StaleApplicationRow extends ApplicationRow {
   days_quiet: number;
 }
 
+// ---------- reads ----------
+// These run on readPool (the SELECT-only mcp_reader role). The write path passes
+// writePool or its transaction's client instead.
+
 // Shared SELECT list, so every query returns the same ApplicationRow shape.
 const COLUMNS = `
   a.id, c.name as company, a.role, a.status, a.applied_at, a.source, a.url, a.notes`;
@@ -41,7 +45,7 @@ export async function listApplications(filters: {
   limit: number;
 }): Promise<ApplicationRow[]> {
   // "$1::type is null or ..." makes each filter optional while keeping one fixed query.
-  const { rows } = await pool.query<ApplicationRow>(
+  const { rows } = await readPool.query<ApplicationRow>(
     `select ${COLUMNS}
        from applications a
        join companies c on c.id = a.company_id
@@ -57,7 +61,7 @@ export async function listApplications(filters: {
 
 export async function getApplicationById(
   id: string,
-  db: Db = pool,
+  db: Db = readPool,
 ): Promise<ApplicationRow | undefined> {
   const { rows } = await db.query<ApplicationRow>(
     `select ${COLUMNS}
@@ -70,7 +74,7 @@ export async function getApplicationById(
 }
 
 export async function findApplications(company: string, role?: string): Promise<ApplicationRow[]> {
-  const { rows } = await pool.query<ApplicationRow>(
+  const { rows } = await readPool.query<ApplicationRow>(
     `select ${COLUMNS}
        from applications a
        join companies c on c.id = a.company_id
@@ -87,7 +91,7 @@ export async function findApplications(company: string, role?: string): Promise<
 // Open applications whose status has not changed for at least `days` days.
 // "Last change" is the newest row in events, which the database trigger keeps up to date.
 export async function findStaleApplications(days: number): Promise<StaleApplicationRow[]> {
-  const { rows } = await pool.query<StaleApplicationRow>(
+  const { rows } = await readPool.query<StaleApplicationRow>(
     `select ${COLUMNS},
             last.occurred_at as last_change,
             (current_date - last.occurred_at::date) as days_quiet
@@ -119,17 +123,17 @@ export interface PipelineSummary {
 export async function getPipelineSummary(): Promise<PipelineSummary> {
   // count(*) is a bigint, which pg returns as a string; ::int keeps it a number.
   const [byStatus, bySource, totals] = await Promise.all([
-    pool.query<{ status: ApplicationStatus; count: number }>(
+    readPool.query<{ status: ApplicationStatus; count: number }>(
       `select status, count(*)::int as count
          from applications where deleted_at is null
         group by status order by status`,
     ),
-    pool.query<{ source: string; count: number }>(
+    readPool.query<{ source: string; count: number }>(
       `select coalesce(source, 'unknown') as source, count(*)::int as count
          from applications where deleted_at is null
         group by 1 order by 2 desc`,
     ),
-    pool.query<{ total: number; sent: number; responded: number }>(
+    readPool.query<{ total: number; sent: number; responded: number }>(
       `select count(*)::int as total,
               count(*) filter (where status <> 'wishlist')::int as sent,
               count(*) filter (where status in ('oa', 'interview', 'offer', 'rejected'))::int as responded

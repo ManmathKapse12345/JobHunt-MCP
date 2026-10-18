@@ -1,5 +1,6 @@
-// Smoke test: starts the built server like Claude does and calls every tool, through
-// BOTH approval paths. Run from the project root:  npm run smoke
+// Smoke test: starts the built server like Claude does and calls every tool (through BOTH
+// approval paths), resource and prompt, then checks the mcp_reader role's limits.
+// Run from the project root:  npm run smoke  (or npm test)
 //
 // It talks to the database in DATABASE_URL (your Supabase project, from .env). Every row
 // it creates belongs to a company named "zz Smoke Test <run id>" and is removed at the end.
@@ -13,7 +14,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import { randomBytes } from "node:crypto";
 import { todayIso } from "../src/dates.js";
-import { pool } from "../src/db/pool.js";
+import { closePools, readerConfigured, readPool, writePool as pool } from "../src/db/pool.js";
 
 type ToolResult = { content: Array<{ type: string; text?: string }>; isError?: boolean };
 
@@ -27,6 +28,7 @@ function serverEnv(): Record<string, string> {
     ...getDefaultEnvironment(),
     APPROVAL_PORT: "0", // any free port, so tests never clash with Claude's running server
     ...(process.env.DATABASE_URL ? { DATABASE_URL: process.env.DATABASE_URL } : {}),
+    ...(process.env.DATABASE_URL_READER ? { DATABASE_URL_READER: process.env.DATABASE_URL_READER } : {}),
   };
 }
 
@@ -310,6 +312,106 @@ try {
     await expectRejected(plain, "list_applications", { status: "interviewing" }, /Invalid option/);
     await expectRejected(plain, "get_application", {}, /Give either an id or a company name/);
   });
+
+  // ----- resources -----
+
+  const resourceText = async (uri: string) => {
+    const { contents } = await plain.readResource({ uri });
+    return contents.map((c) => ("text" in c ? c.text : "")).join("\n");
+  };
+
+  await test("resources: jobhunt://pipeline matches the tool, the template lists and reads applications", async () => {
+    const { resourceTemplates } = await plain.listResourceTemplates();
+    assert.deepEqual(resourceTemplates.map((t) => t.uriTemplate), ["jobhunt://applications/{id}"]);
+
+    assert.equal(
+      await resourceText("jobhunt://pipeline"),
+      textOf(await call(plain, "get_pipeline_summary", {})),
+    );
+
+    nextAnswer = ACCEPT;
+    const id = idOf(await call(elicit, "add_application", { company: COMPANY, role: "Resource Role", notes: "via resource" }));
+    const uri = `jobhunt://applications/${id}`;
+    const { resources } = await plain.listResources();
+    const uris = resources.map((r) => r.uri);
+    assert.ok(uris.includes("jobhunt://pipeline"), "static resource listed");
+    assert.ok(uris.includes(uri), "the template's list callback includes the new application");
+    assert.equal(resources.find((r) => r.uri === uri)?.name, `Resource Role at ${COMPANY}`);
+
+    const detail = await resourceText(uri);
+    assert.match(detail, /Resource Role at zz Smoke Test/);
+    assert.match(detail, /Notes: via resource/);
+    assert.match(detail, /History:\n- \d{4}-\d{2}-\d{2}: created as applied/);
+
+    // Unknown, malformed and soft-deleted ids are all "not found" (-32002).
+    await assert.rejects(resourceText("jobhunt://applications/00000000-0000-4000-8000-000000000000"), /-32002/);
+    await assert.rejects(resourceText("jobhunt://applications/not-a-uuid"), /-32002/);
+    await assert.rejects(resourceText(`jobhunt://applications/${appId}`), /-32002/);
+  });
+
+  // ----- prompts -----
+
+  await test("prompts: weekly_followups takes string arguments and embeds live data", async () => {
+    const { prompts } = await plain.listPrompts();
+    const p = prompts.find((x) => x.name === "weekly_followups");
+    assert.ok(p, "weekly_followups is listed");
+    assert.deepEqual(
+      p.arguments?.map((a) => [a.name, a.required ?? false]),
+      [["days", false], ["tone", false]],
+    );
+
+    const r = await plain.getPrompt({ name: "weekly_followups", arguments: { days: "3", tone: "formal" } });
+    const first = r.messages[0]!.content;
+    assert.equal(first.type, "text");
+    assert.match(first.type === "text" ? first.text : "", /Applications quiet for 3\+ days/);
+    const second = r.messages[1]!.content;
+    assert.equal(second.type, "resource");
+    assert.match(second.type === "resource" && "text" in second.resource ? second.resource.text : "", /^Total tracked/);
+
+    const defaults = await plain.getPrompt({ name: "weekly_followups", arguments: {} });
+    assert.match(JSON.stringify(defaults.messages[0]), /quiet for 7\+ days/);
+
+    await assert.rejects(plain.getPrompt({ name: "weekly_followups", arguments: { days: "a week" } }), /whole number/);
+    await assert.rejects(plain.getPrompt({ name: "weekly_followups", arguments: { days: "0" } }));
+  });
+
+  // ----- the mcp_reader role (supabase/migrations/003_mcp_reader.sql) -----
+
+  if (!readerConfigured) {
+    console.log("⚠️  mcp_reader checks skipped: DATABASE_URL_READER is not set (reads use DATABASE_URL)");
+  } else {
+    await test("mcp_reader: sees live rows, cannot write, cannot read approvals", async () => {
+      const who = await readPool.query<{ u: string; ro: string }>(
+        "select current_user as u, current_setting('transaction_read_only') as ro",
+      );
+      assert.deepEqual([who.rows[0]!.u, who.rows[0]!.ro], ["mcp_reader", "on"]);
+
+      // RLS policies let it see live applications (without them it would see 0 rows)...
+      const live = "select count(*)::int as n from applications where deleted_at is null";
+      const [asReader, asWriter] = await Promise.all([readPool.query(live), pool.query(live)]);
+      assert.equal(asReader.rows[0].n, asWriter.rows[0].n);
+      // ...but never soft-deleted ones, even when the query does not filter them out.
+      assert.equal((await readPool.query("select 1 from applications where id = $1", [appId])).rowCount, 0);
+
+      // Layer 1: every transaction is read-only by default (25006).
+      await assert.rejects(readPool.query("insert into companies (name) values ('zz nope')"), { code: "25006" });
+      // Layer 2: even in an explicit read-write transaction, there is no INSERT/UPDATE grant (42501).
+      const c = await readPool.connect();
+      try {
+        await c.query("begin read write");
+        await assert.rejects(c.query("insert into companies (name) values ('zz nope')"), { code: "42501" });
+        await c.query("rollback");
+        await c.query("begin read write");
+        await assert.rejects(c.query("update applications set notes = 'x' where id = $1", [appId]), { code: "42501" });
+      } finally {
+        await c.query("rollback");
+        c.release();
+      }
+      // No grant on pending_actions (approval token hashes) or contacts.
+      await assert.rejects(readPool.query("select * from pending_actions limit 1"), { code: "42501" });
+      await assert.rejects(readPool.query("select * from contacts limit 1"), { code: "42501" });
+    });
+  }
 } finally {
   await Promise.all([elicit.close(), plain.close()]); // stops both server processes
   // Remove everything this run created (test rows only: matched by the run's company name).
@@ -319,7 +421,7 @@ try {
     [COMPANY],
   );
   await pool.query("delete from companies where name = $1", [COMPANY]);
-  await pool.end();
+  await closePools();
 }
 
 console.log(failures ? `\n${failures} test(s) failed` : "\nAll tests passed");

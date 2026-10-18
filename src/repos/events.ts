@@ -1,5 +1,5 @@
 import type pg from "pg";
-import { pool } from "../db/pool.js";
+import { readPool } from "../db/pool.js";
 import type { ApplicationStatus } from "./applications.js";
 
 export type EventKind = "created" | "status_change" | "updated" | "deleted";
@@ -16,7 +16,7 @@ export interface EventRow {
 
 // History of one application, oldest first.
 export async function listEvents(applicationId: string): Promise<EventRow[]> {
-  const { rows } = await pool.query<EventRow>(
+  const { rows } = await readPool.query<EventRow>(
     `select kind, from_status, to_status, occurred_at, actor, note, details
        from events
       where application_id = $1

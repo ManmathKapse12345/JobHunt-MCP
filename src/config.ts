@@ -10,10 +10,16 @@ export const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const envPath = path.join(projectRoot, ".env");
 if (existsSync(envPath)) process.loadEnvFile(envPath);
 
+const PostgresUrl = z
+  .url()
+  .refine((u) => /^postgres(ql)?:\/\//.test(u), "must start with postgresql://");
+
 const EnvSchema = z.object({
-  DATABASE_URL: z
-    .url()
-    .refine((u) => /^postgres(ql)?:\/\//.test(u), "must start with postgresql://"),
+  // The postgres role: used by write tools (behind approval) and the approval page.
+  DATABASE_URL: PostgresUrl,
+  // The SELECT-only mcp_reader role (supabase/migrations/003_mcp_reader.sql): used by
+  // read tools, resources and prompts. Optional; without it reads fall back to DATABASE_URL.
+  DATABASE_URL_READER: PostgresUrl.optional(),
   // Port of the local approval page (http://127.0.0.1:<port>/approve/...). 0 = pick a free one.
   APPROVAL_PORT: z.coerce.number().int().min(0).max(65535).default(4848),
 });

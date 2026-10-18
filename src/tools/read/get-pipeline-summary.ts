@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getPipelineSummary } from "../../repos/applications.js";
-import { text } from "../format.js";
+import { pipelineText, text } from "../format.js";
 
 export function registerGetPipelineSummary(server: McpServer) {
   server.registerTool(
@@ -14,19 +14,6 @@ export function registerGetPipelineSummary(server: McpServer) {
       inputSchema: {},
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async () => {
-      const s = await getPipelineSummary();
-      const rate = s.sent > 0 ? Math.round((s.responded / s.sent) * 100) : 0;
-      return text(
-        [
-          `Total tracked: ${s.total} (${s.sent} sent, ${s.total - s.sent} on the wishlist)`,
-          `Response rate: ${s.responded}/${s.sent} = ${rate}% got an OA, interview, offer or rejection`,
-          "By status:",
-          ...s.byStatus.map((r) => `- ${r.status}: ${r.count}`),
-          "By source:",
-          ...s.bySource.map((r) => `- ${r.source}: ${r.count}`),
-        ].join("\n"),
-      );
-    },
+    async () => text(pipelineText(await getPipelineSummary())),
   );
 }

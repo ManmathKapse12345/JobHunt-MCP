@@ -1,10 +1,10 @@
 import type pg from "pg";
-import { pool } from "./pool.js";
+import { writePool } from "./pool.js";
 
-// Run fn inside BEGIN ... COMMIT on one connection. Any throw rolls everything back,
+// Run fn inside BEGIN ... COMMIT on one write connection. Any throw rolls everything back,
 // so a change and its audit event are saved together or not at all.
 export async function withTransaction<T>(fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
+  const client = await writePool.connect();
   try {
     await client.query("begin");
     const result = await fn(client);

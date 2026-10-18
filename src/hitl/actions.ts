@@ -15,7 +15,7 @@ import {
   type EditableField,
 } from "../repos/applications.js";
 import { insertAuditEvent } from "../repos/events.js";
-import { pool } from "../db/pool.js";
+import { writePool } from "../db/pool.js";
 import { setAuditContext } from "../db/tx.js";
 
 // Every write goes through two steps:
@@ -51,7 +51,7 @@ const describe = (a: Pick<ApplicationRow, "role" | "company">) => `"${a.role}" a
 const show = (v: string | null | undefined) => (v == null || v === "" ? "(empty)" : `"${v}"`);
 
 async function loadLive(id: string): Promise<ApplicationRow> {
-  const app = await getApplicationById(id);
+  const app = await getApplicationById(id, writePool);
   if (!app) throw new ActionError(`No application with id ${id} (it may have been deleted).`);
   return app;
 }
@@ -79,7 +79,7 @@ export async function prepareAdd(input: {
   source?: string;
   notes?: string;
 }): Promise<Prepared> {
-  const existing = await findLiveApplication(pool, input.company, input.role);
+  const existing = await findLiveApplication(writePool, input.company, input.role);
   if (existing) {
     throw new ActionError(`Already tracking ${describe(existing)} (id ${existing.id}). Nothing to add.`);
   }

@@ -1,5 +1,5 @@
 import type pg from "pg";
-import { pool, type Db } from "../db/pool.js";
+import { writePool, type Db } from "../db/pool.js";
 
 export type PendingStatus = "pending" | "approved" | "rejected" | "expired";
 
@@ -23,7 +23,7 @@ export async function insertPendingAction(a: {
   summary: string;
   tokenHash: string;
 }): Promise<{ id: string; expires_at: Date }> {
-  const { rows } = await pool.query<{ id: string; expires_at: Date }>(
+  const { rows } = await writePool.query<{ id: string; expires_at: Date }>(
     `insert into pending_actions (tool_name, payload, summary, token_hash)
      values ($1, $2, $3, $4)
      returning id, expires_at`,
@@ -32,14 +32,14 @@ export async function insertPendingAction(a: {
   return rows[0]!;
 }
 
-export async function getPendingAction(id: string, db: Db = pool): Promise<PendingActionRow | undefined> {
+export async function getPendingAction(id: string, db: Db = writePool): Promise<PendingActionRow | undefined> {
   const { rows } = await db.query<PendingActionRow>("select * from pending_actions where id = $1", [id]);
   return rows[0];
 }
 
 // Marks old links as expired so they can no longer be approved.
 export async function expireOldPendingActions(): Promise<void> {
-  await pool.query(
+  await writePool.query(
     `update pending_actions set status = 'expired', decided_at = now()
       where status = 'pending' and expires_at <= now()`,
   );
