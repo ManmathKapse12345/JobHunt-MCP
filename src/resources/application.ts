@@ -16,9 +16,12 @@ export function registerApplicationResource(server: McpServer) {
     new ResourceTemplate("jobhunt://applications/{id}", {
       // Lets clients show concrete URIs to pick from (resources/list), newest first.
       list: async () => ({
+        // title too: otherwise each one inherits the template's title ("Job Application"),
+        // which clients like the Inspector show instead of the name.
         resources: (await listApplications({ limit: 50 })).map((a) => ({
           uri: `jobhunt://applications/${a.id}`,
           name: `${a.role} at ${a.company}`,
+          title: `${a.role} at ${a.company}`,
           description: `Status: ${a.status}`,
           mimeType: "text/plain",
         })),

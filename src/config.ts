@@ -22,6 +22,18 @@ const EnvSchema = z.object({
   DATABASE_URL_READER: PostgresUrl.optional(),
   // Port of the local approval page (http://127.0.0.1:<port>/approve/...). 0 = pick a free one.
   APPROVAL_PORT: z.coerce.number().int().min(0).max(65535).default(4848),
+
+  // ----- HTTP mode only (src/http.ts); src/http.ts refuses to start without the tokens -----
+  // Clients send it as "Authorization: Bearer <token>" on every /mcp request.
+  MCP_AUTH_TOKEN: z.string().min(32, "use at least 32 random characters").optional(),
+  // The approval page's sign-in password. Only you know it; the model never sees it.
+  APPROVAL_ADMIN_TOKEN: z.string().min(16, "use at least 16 random characters").optional(),
+  PORT: z.coerce.number().int().min(0).max(65535).default(3000), // Render sets this
+  HOST: z.string().default("0.0.0.0"),
+  // Where people reach the server, used to build approval links and check Host/Origin.
+  // Render sets RENDER_EXTERNAL_URL itself; locally it defaults to http://localhost:<PORT>.
+  PUBLIC_URL: z.url().optional(),
+  RENDER_EXTERNAL_URL: z.url().optional(),
 });
 
 const parsed = EnvSchema.safeParse(process.env);

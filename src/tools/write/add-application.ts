@@ -32,6 +32,6 @@ export function registerAddApplication(server: McpServer) {
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    (input) => runWithApproval(server, () => prepareAdd(input)),
+    (input, extra) => runWithApproval(server, extra.requestId, () => prepareAdd(input)),
   );
 }

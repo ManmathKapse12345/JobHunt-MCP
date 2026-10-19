@@ -20,6 +20,6 @@ export function registerDeleteApplication(server: McpServer) {
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
-    (input) => runWithApproval(server, () => prepareDelete(input)),
+    (input, extra) => runWithApproval(server, extra.requestId, () => prepareDelete(input)),
   );
 }

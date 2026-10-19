@@ -11,12 +11,10 @@ import {
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { ElicitRequestSchema, type ElicitResult } from "@modelcontextprotocol/sdk/types.js";
 import assert from "node:assert/strict";
-import http from "node:http";
 import { randomBytes } from "node:crypto";
 import { todayIso } from "../src/dates.js";
 import { closePools, readerConfigured, readPool, writePool as pool } from "../src/db/pool.js";
-
-type ToolResult = { content: Array<{ type: string; text?: string }>; isError?: boolean };
+import { call, cleanupCompany, failureCount, idOf, request, test, textOf, tokenOf, type ToolResult } from "./helpers.js";
 
 const RUN = randomBytes(3).toString("hex");
 const COMPANY = `zz Smoke Test ${RUN}`;
@@ -58,11 +56,6 @@ const ACCEPT: ElicitResult = { action: "accept", content: { approve: true } };
 
 // ---------- helpers ----------
 
-async function call(client: Client, name: string, args: Record<string, unknown>): Promise<ToolResult> {
-  return (await client.callTool({ name, arguments: args })) as ToolResult;
-}
-const textOf = (r: ToolResult) => r.content.map((c) => c.text ?? "").join("\n");
-
 // Bad input can come back two ways: an isError result, or a thrown protocol error (-32602).
 async function expectRejected(client: Client, name: string, args: Record<string, unknown>, pattern: RegExp) {
   let result: ToolResult;
@@ -76,7 +69,6 @@ async function expectRejected(client: Client, name: string, args: Record<string,
   assert.match(textOf(result), pattern);
 }
 
-const idOf = (r: ToolResult) => /id ([0-9a-f-]{36})/.exec(textOf(r))?.[1] ?? assert.fail(textOf(r));
 const linkOf = (r: ToolResult) => /(http:\/\/127\.0\.0\.1:\d+\/approve\/\S+)/.exec(textOf(r))?.[1] ?? assert.fail(textOf(r));
 
 async function appRow(id: string) {
@@ -99,50 +91,8 @@ async function pendingOf(link: string) {
   return rows[0];
 }
 
-// Raw HTTP, so tests can send headers (Host, Origin) the way a hostile page would.
-function request(
-  link: string,
-  opts: { method?: "GET" | "POST"; form?: Record<string, string>; headers?: Record<string, string> } = {},
-): Promise<{ status: number; body: string }> {
-  const url = new URL(link);
-  const body = opts.form ? new URLSearchParams(opts.form).toString() : undefined;
-  return new Promise((resolve, reject) => {
-    const req = http.request(
-      {
-        host: url.hostname,
-        port: url.port,
-        path: url.pathname + url.search,
-        method: opts.method ?? "GET",
-        headers: {
-          ...(body && { "Content-Type": "application/x-www-form-urlencoded" }),
-          ...opts.headers,
-        },
-      },
-      (res) => {
-        let data = "";
-        res.setEncoding("utf8");
-        res.on("data", (c: string) => (data += c));
-        res.on("end", () => resolve({ status: res.statusCode ?? 0, body: data }));
-      },
-    );
-    req.on("error", reject);
-    req.end(body);
-  });
-}
-const tokenOf = (link: string) => new URL(link).searchParams.get("token") ?? "";
 const decide = (link: string, decision: "approve" | "reject") =>
   request(link.split("?")[0]!, { method: "POST", form: { token: tokenOf(link), decision } });
-
-let failures = 0;
-async function test(name: string, fn: () => Promise<void>) {
-  try {
-    await fn();
-    console.log(`✅ ${name}`);
-  } catch (e) {
-    failures++;
-    console.log(`❌ ${name}\n   ${e instanceof Error ? e.message : String(e)}`);
-  }
-}
 
 // ---------- tests ----------
 try {
@@ -243,6 +193,8 @@ try {
 
     const page = await request(link);
     assert.equal(page.status, 200);
+    // Not "no-referrer": browsers would then send "Origin: null" when you click Approve.
+    assert.equal(page.headers["referrer-policy"], "same-origin");
     assert.match(page.body, /Approve this change\?/);
     assert.match(page.body, /zz Smoke Test/);
 
@@ -337,6 +289,7 @@ try {
     assert.ok(uris.includes("jobhunt://pipeline"), "static resource listed");
     assert.ok(uris.includes(uri), "the template's list callback includes the new application");
     assert.equal(resources.find((r) => r.uri === uri)?.name, `Resource Role at ${COMPANY}`);
+    assert.equal(resources.find((r) => r.uri === uri)?.title, `Resource Role at ${COMPANY}`);
 
     const detail = await resourceText(uri);
     assert.match(detail, /Resource Role at zz Smoke Test/);
@@ -414,15 +367,10 @@ try {
   }
 } finally {
   await Promise.all([elicit.close(), plain.close()]); // stops both server processes
-  // Remove everything this run created (test rows only: matched by the run's company name).
-  await pool.query("delete from pending_actions where summary like $1", [`%${COMPANY}%`]);
-  await pool.query(
-    "delete from applications where company_id in (select id from companies where name = $1)",
-    [COMPANY],
-  );
-  await pool.query("delete from companies where name = $1", [COMPANY]);
+  await cleanupCompany(pool, COMPANY);
   await closePools();
 }
 
+const failures = failureCount();
 console.log(failures ? `\n${failures} test(s) failed` : "\nAll tests passed");
 process.exitCode = failures ? 1 : 0;

@@ -21,6 +21,6 @@ export function registerUpdateApplicationStatus(server: McpServer) {
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
-    (input) => runWithApproval(server, () => prepareStatusChange(input)),
+    (input, extra) => runWithApproval(server, extra.requestId, () => prepareStatusChange(input)),
   );
 }

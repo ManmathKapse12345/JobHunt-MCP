@@ -1,7 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { RequestId } from "@modelcontextprotocol/sdk/types.js";
 import { insertPendingAction } from "../repos/pending-actions.js";
 import type { Prepared } from "./actions.js";
-import { approvalUrl } from "./approval-server.js";
+import { approvalUrl } from "./links.js";
 import { hashToken, newToken } from "./token.js";
 
 export type Approval =
@@ -16,7 +17,16 @@ const ELICITATION_TIMEOUT_MS = 10 * 60_000;
 //  1. If the client supports elicitation, ask the user directly with a yes/no form.
 //  2. Otherwise store the change in pending_actions and return a link the user opens
 //     to approve it; the change is applied from that page.
-export async function requireApproval(server: McpServer, prepared: Prepared): Promise<Approval> {
+//
+// relatedRequestId: over Streamable HTTP, this sends the elicitation on the SSE stream of the
+// tool call it belongs to. Without it, it goes to the optional standalone GET stream, which
+// only works if the client opened one (the SDK's client does; not every client must). stdio
+// ignores it.
+export async function requireApproval(
+  server: McpServer,
+  prepared: Prepared,
+  relatedRequestId?: RequestId,
+): Promise<Approval> {
   const lowLevel = server.server;
 
   if (lowLevel.getClientCapabilities()?.elicitation?.form) {
@@ -37,7 +47,7 @@ export async function requireApproval(server: McpServer, prepared: Prepared): Pr
             required: ["approve"],
           },
         },
-        { timeout: ELICITATION_TIMEOUT_MS },
+        { timeout: ELICITATION_TIMEOUT_MS, relatedRequestId },
       );
       if (result.action === "accept" && result.content?.approve === true) {
         const client = lowLevel.getClientVersion()?.name ?? "unknown client";

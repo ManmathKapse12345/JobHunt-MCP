@@ -1,11 +1,18 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { RequestId } from "@modelcontextprotocol/sdk/types.js";
 import { withTransaction } from "../../db/tx.js";
 import { ActionError, executeAction, type Prepared } from "../../hitl/actions.js";
 import { requireApproval } from "../../hitl/requireApproval.js";
 import { text } from "../format.js";
 
 // Shared body of every write tool: prepare -> ask the human -> apply (or hand back a link).
-export async function runWithApproval(server: McpServer, prepare: () => Promise<Prepared>) {
+// requestId is the tool call's own id, so over HTTP the approval question travels on
+// that call's response stream.
+export async function runWithApproval(
+  server: McpServer,
+  requestId: RequestId,
+  prepare: () => Promise<Prepared>,
+) {
   let prepared: Prepared;
   try {
     prepared = await prepare();
@@ -14,7 +21,7 @@ export async function runWithApproval(server: McpServer, prepare: () => Promise<
     throw err;
   }
 
-  const approval = await requireApproval(server, prepared);
+  const approval = await requireApproval(server, prepared, requestId);
 
   switch (approval.kind) {
     case "approved":

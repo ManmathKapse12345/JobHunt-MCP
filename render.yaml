@@ -1,0 +1,21 @@
+# Render Blueprint: the web service's settings, kept in git. Secrets are NOT in this file:
+#   sync: false       Render asks you for the value when you create the Blueprint
+#   generateValue     Render makes a random value; copy it from the dashboard
+# Render also sets PORT and RENDER_EXTERNAL_URL itself.
+services:
+  - type: web
+    name: jobhunt-mcp
+    runtime: docker
+    plan: free # sleeps after ~15 min idle; the first request then takes ~1 min
+    region: singapore # closest Render region to the Supabase project (ap-northeast-2)
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /healthz
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_URL_READER
+        sync: false
+      - key: MCP_AUTH_TOKEN
+        generateValue: true
+      - key: APPROVAL_ADMIN_TOKEN
+        generateValue: true

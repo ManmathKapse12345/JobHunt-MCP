@@ -1,6 +1,6 @@
 {
   "name": "jobhunt-mcp",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "MCP server exposing a job-application tracker to AI agents, with human-in-the-loop approval on writes",
   "main": "dist/index.js",
   "scripts": {
@@ -8,9 +8,12 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit && tsc -p scripts",
-    "test": "npm run smoke",
+    "test": "npm run smoke && tsx scripts/smoke-http.ts",
     "smoke": "npm run build && tsx scripts/smoke.ts",
-    "show": "tsx scripts/show.ts"
+    "show": "tsx scripts/show.ts",
+    "dev:http": "tsx src/http.ts",
+    "start:http": "node dist/http.js",
+    "smoke:http": "npm run build && tsx scripts/smoke-http.ts"
   },
   "keywords": [
     "mcp",
@@ -23,10 +26,12 @@
   "type": "module",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
+    "express": "^5.3.0",
     "pg": "^8.23.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^26.6.5",
     "@types/pg": "^8.23.1",
     "tsx": "^4.23.15",
