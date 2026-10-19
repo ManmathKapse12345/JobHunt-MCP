@@ -1,9 +1,9 @@
 {
-  // Type-checks test/ and vitest.config.ts (run by Vitest, never compiled).
+  // Type-checks test/, evals/*.ts and vitest.config.ts (run by Vitest/tsx, never compiled).
   "extends": "../tsconfig.json",
   "compilerOptions": {
     "rootDir": "..",
     "noEmit": true
   },
-  "include": ["**/*.ts", "../vitest.config.ts", "../src/**/*.ts"]
+  "include": ["**/*.ts", "../evals/**/*.ts", "../vitest.config.ts", "../src/**/*.ts"]
 }

@@ -17,7 +17,10 @@
     "smoke": "npm run build && tsx scripts/smoke.ts",
     "smoke:http": "npm run build && tsx scripts/smoke-http.ts",
     "smoke:all": "npm run smoke && tsx scripts/smoke-http.ts",
-    "show": "tsx scripts/show.ts"
+    "show": "tsx scripts/show.ts",
+    "eval": "npm run build && tsx evals/seed.ts && promptfoo eval -c evals/promptfooconfig.yaml -o evals/results/latest.json --no-cache",
+    "eval:summary": "node evals/summarize.mjs evals/results/latest.json",
+    "eval:view": "promptfoo view"
   },
   "keywords": [
     "mcp",
@@ -35,9 +38,11 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@google/genai": "^2.30.0",
     "@types/express": "^5.0.6",
     "@types/node": "^26.6.5",
     "@types/pg": "^8.23.1",
+    "promptfoo": "^0.124.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"

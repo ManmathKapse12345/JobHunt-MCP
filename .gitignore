@@ -6,3 +6,8 @@ data/
 test-data/
 # personal job-search data
 supabase/seed.sql
+
+# evals: seeded-data fingerprint and raw promptfoo output (summaries in evals/results/*.md are kept)
+evals/.baseline.json
+evals/results/*.json
+.vscode/
