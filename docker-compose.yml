@@ -1,0 +1,29 @@
+# A throwaway Postgres for the test suite (npm test). Not used by the app itself.
+#   npm run db:up     start it (runs supabase/migrations/*.sql on first start)
+#   npm run db:down   stop it; the data is gone (it lives in memory)
+#
+# Only reachable from this computer (127.0.0.1), with password-free "trust" auth,
+# so the repo holds no database secrets at all. Never point this config at Supabase.
+name: jobhunt-test
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: jobhunt_test
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "127.0.0.1:54329:5432"
+    volumes:
+      # Every .sql file here runs once, in name order (001, 002, 003), when the database
+      # is created. That also proves the migrations apply cleanly to an empty database.
+      - ./supabase/migrations:/docker-entrypoint-initdb.d:ro
+    tmpfs:
+      - /var/lib/postgresql/data # in memory: fast, and empty on every start
+    healthcheck:
+      # -h 127.0.0.1: TCP, so it only passes once the migrations are done (the
+      # temporary server that runs them listens on a Unix socket only).
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "jobhunt_test"]
+      interval: 1s
+      timeout: 3s
+      retries: 30

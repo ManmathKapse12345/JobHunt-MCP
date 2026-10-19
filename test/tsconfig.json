@@ -1,0 +1,9 @@
+{
+  // Type-checks test/ and vitest.config.ts (run by Vitest, never compiled).
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "noEmit": true
+  },
+  "include": ["**/*.ts", "../vitest.config.ts", "../src/**/*.ts"]
+}

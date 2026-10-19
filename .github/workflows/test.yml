@@ -1,0 +1,35 @@
+# Runs the test suite on every push and pull request, the same way as locally:
+# the docker-compose Postgres (migrations applied from scratch), typecheck, build, Vitest.
+# No secrets needed: the test database is local to the runner and uses trust auth.
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Start the test database
+        run: npm run db:up
+
+      - run: npm run typecheck
+
+      - run: npm run build
+
+      - run: npm test
+
+      - name: Database logs (on failure)
+        if: failure()
+        run: docker compose logs db

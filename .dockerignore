@@ -11,3 +11,7 @@ test-data/
 supabase/seed.sql
 scripts/
 docs/
+test/
+vitest.config.ts
+docker-compose.yml
+.github/

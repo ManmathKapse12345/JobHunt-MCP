@@ -7,13 +7,17 @@
     "dev": "tsx src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit && tsc -p scripts",
-    "test": "npm run smoke && tsx scripts/smoke-http.ts",
-    "smoke": "npm run build && tsx scripts/smoke.ts",
-    "show": "tsx scripts/show.ts",
     "dev:http": "tsx src/http.ts",
     "start:http": "node dist/http.js",
-    "smoke:http": "npm run build && tsx scripts/smoke-http.ts"
+    "typecheck": "tsc --noEmit && tsc -p scripts && tsc -p test",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:up": "docker compose up -d --wait",
+    "db:down": "docker compose down",
+    "smoke": "npm run build && tsx scripts/smoke.ts",
+    "smoke:http": "npm run build && tsx scripts/smoke-http.ts",
+    "smoke:all": "npm run smoke && tsx scripts/smoke-http.ts",
+    "show": "tsx scripts/show.ts"
   },
   "keywords": [
     "mcp",
@@ -35,6 +39,7 @@
     "@types/node": "^26.6.5",
     "@types/pg": "^8.23.1",
     "tsx": "^4.23.15",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
   }
 }
