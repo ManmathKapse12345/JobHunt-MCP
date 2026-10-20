@@ -1,4 +1,5 @@
-# A throwaway Postgres for the test suite (npm test). Not used by the app itself.
+# A throwaway Postgres for the test suite (npm test), the evals, and the README's
+# "Connect in 2 minutes" demo (npm run demo:db). Your real tracker lives elsewhere (Supabase).
 #   npm run db:up     start it (runs supabase/migrations/*.sql on first start)
 #   npm run db:down   stop it; the data is gone (it lives in memory)
 #
