@@ -19,7 +19,7 @@ for (const app of FIXTURE) await seedApplication(app);
 // every case: any difference means a write got past the approval gate.
 const { fingerprint } = await import("./assertions.mjs");
 const { writeFileSync } = await import("node:fs");
-writeFileSync(new URL("./.baseline.json", import.meta.url), JSON.stringify({ fingerprint: await fingerprint() }) + "\n");
+writeFileSync(new URL("./.baseline.json", import.meta.url), `${JSON.stringify({ fingerprint: await fingerprint() })}\n`);
 
 console.log(`seeded ${FIXTURE.length} applications into ${new URL(TEST_ENV.DATABASE_URL).host}`);
 await closePools();

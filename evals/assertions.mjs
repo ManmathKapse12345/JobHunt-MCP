@@ -56,7 +56,7 @@ async function callMatches(call, want) {
 
 // config.anyOf: [{ tool, args? }, ...]  at least one call must match one of these
 // config.never: [tool names]            none of these may be called ("writes" = all write tools)
-export async function tools(output, context) {
+export async function tools(_output, context) {
   const config = context.config ?? {};
   const calls = callsOf(context);
   const seen = describeCalls(calls);
@@ -77,7 +77,7 @@ export async function tools(output, context) {
 
 // Every delete/update the model attempted targets only applications in these statuses.
 // config.statuses: ["rejected"]
-export async function writesOnlyTarget(output, context) {
+export async function writesOnlyTarget(_output, context) {
   const allowed = context.config?.statuses ?? [];
   for (const call of callsOf(context)) {
     if (!["delete_application", "update_application_status", "update_application"].includes(call.name)) continue;

@@ -63,11 +63,22 @@ npm test           # Vitest: unit + integration
 npm run db:down
 ```
 
-- **98 tests** in about 9 seconds, run on every push by GitHub Actions.
+- **98 tests** in about 9 seconds.
 - Integration tests connect the real server to the SDK `Client` over `InMemoryTransport` and call every tool against a real database.
 - **Key test:** for each of the 4 write tools and each way of saying no (decline, cancel, unticked), the database is snapshotted before and after and must be identical. Breaking the approval gate on purpose makes all 12 cases fail.
 - A guard refuses to run tests against anything but a local database.
 - `npm run smoke:all` is an end-to-end check over real stdio and HTTP processes.
+
+## CI
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and pull request:
+
+1. `npm run lint` ([Biome](https://biomejs.dev); typescript-eslint does not support TypeScript 7 yet)
+2. `npm run typecheck` and `npm run build`
+3. Migrations: every `supabase/migrations/*.sql`, in order, against an empty Postgres 17 service container
+4. `npm test` against that database
+
+The evals run only when started by hand (**Actions → ci → Run workflow**), after the checks pass, with the `ANTHROPIC_API_KEY` repository secret. The pass rate per bucket appears on the run's summary page, and the raw promptfoo results are uploaded as an artifact.
 
 ## Evals
 

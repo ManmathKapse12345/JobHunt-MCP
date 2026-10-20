@@ -1,0 +1,24 @@
+{
+	// Lint only (npm run lint). Biome parses TypeScript itself, so it works with
+	// TypeScript 7, which typescript-eslint does not support yet. Formatting is off:
+	// the code keeps its current style, and tsc --noEmit still does the type checking.
+	"$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+	"vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+	"files": {
+		"includes": ["**", "!evals/results", "!package-lock.json"]
+	},
+	"formatter": { "enabled": false },
+	"assist": { "enabled": false },
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"preset": "recommended",
+			// tsconfig has noUncheckedIndexedAccess, so regex groups and rows[0] need a `!`
+			// where the code already knows the value exists.
+			"style": { "noNonNullAssertion": "off" },
+			// A bare `let x;` is not `any` under strict TypeScript: tsc types it by control
+			// flow, and still reports a real implicit any.
+			"suspicious": { "noImplicitAnyLet": "off" }
+		}
+	}
+}

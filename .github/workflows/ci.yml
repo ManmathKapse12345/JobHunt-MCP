@@ -1,0 +1,140 @@
+# CI: lint, typecheck, build, migrations and Vitest on every push and pull request.
+# Evals (promptfoo against Claude) only run when started by hand:
+#   Actions -> ci -> Run workflow   (needs the ANTHROPIC_API_KEY repository secret)
+#
+# Postgres is a service container on the same address as docker-compose.yml
+# (localhost:54329, trust auth, database jobhunt_test), so test/env.ts and
+# evals/server.mjs work unchanged. A service starts before the checkout and cannot
+# mount supabase/migrations, so the migrations are applied by an explicit step, which
+# also proves they run cleanly, in order, on an empty database.
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      evals:
+        description: Also run the promptfoo evals (50 cases on Claude Haiku, about $0.06)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# A newer push to the same branch cancels the older run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PGHOST: localhost
+  PGPORT: 54329
+  PGUSER: postgres
+  PGDATABASE: jobhunt_test
+  PGOPTIONS: -c client_min_messages=warning # hide "does not exist, skipping" notices
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      db:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_DB: jobhunt_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 54329:5432
+        # The job waits until this passes before running any step.
+        options: >-
+          --health-cmd "pg_isready -U postgres -d jobhunt_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run lint
+
+      - run: npm run typecheck
+
+      - run: npm run build
+
+      - name: Apply migrations
+        run: |
+          for f in supabase/migrations/*.sql; do
+            echo "::group::$f"
+            psql -v ON_ERROR_STOP=1 --quiet -f "$f"
+            echo "::endgroup::"
+          done
+
+      - run: npm test
+
+  evals:
+    # Manual runs only: each run spends API credit.
+    if: github.event_name == 'workflow_dispatch' && inputs.evals
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      db:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_DB: jobhunt_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 54329:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d jobhunt_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      PROMPTFOO_DISABLE_TELEMETRY: "1"
+    steps:
+      - name: Check the API key secret
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::Add an ANTHROPIC_API_KEY repository secret (Settings -> Secrets and variables -> Actions)."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Apply migrations
+        run: |
+          for f in supabase/migrations/*.sql; do
+            psql -v ON_ERROR_STOP=1 --quiet -f "$f"
+          done
+
+      # Builds, seeds the test database, then runs every case. Fails the job if any case fails.
+      - run: npm run eval
+
+      - name: Pass rate per bucket
+        if: ${{ !cancelled() && hashFiles('evals/results/latest.json') != '' }}
+        run: npm run --silent eval:summary >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: eval-results
+          path: evals/results/latest.json
+          if-no-files-found: ignore
