@@ -5,6 +5,8 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createApprovalHandler } from "../../src/hitl/approval-page.js";
 import { setApprovalBaseUrl } from "../../src/hitl/links.js";
+import { writePool } from "../../src/db/pool.js";
+import { expireOldPendingActions, PENDING_TTL_MINUTES } from "../../src/repos/pending-actions.js";
 import { appRow, count, eventsOf, resetDb, seedApplication, snapshotDb } from "../helpers/db.js";
 import { connectClient, textOf } from "../helpers/mcp.js";
 
@@ -104,5 +106,41 @@ describe("without elicitation", () => {
     expect((await decide(link, "approve")).status).toBe(401);
     expect((await appRow(id)).status).toBe("applied");
     expect(await eventsOf(id)).toHaveLength(1); // only "created"
+  });
+});
+
+describe("expiry", () => {
+  it("a link expires 15 minutes after it is created, and the reply says so", async () => {
+    const r = await mcp.call("add_application", { company: "Stripe", role: "SDE" });
+    expect(textOf(r)).toMatch(/expires in 15 minutes/);
+    const { rows } = await writePool.query<{ minutes: number }>(
+      "select extract(epoch from expires_at - created_at)::int / 60 as minutes from pending_actions",
+    );
+    expect(rows).toEqual([{ minutes: PENDING_TTL_MINUTES }]);
+    expect(PENDING_TTL_MINUTES).toBe(15);
+  });
+
+  it("an expired link can't be approved, and changes nothing", async () => {
+    const id = await seedApplication({ company: "Stripe", role: "SDE" });
+    const link = linkIn(textOf(await mcp.call("update_application_status", { id, status: "offer" })));
+    // 16 minutes later:
+    await writePool.query("update pending_actions set created_at = created_at - interval '16 minutes', expires_at = expires_at - interval '16 minutes'");
+
+    const res = await decide(link, "approve");
+    expect(res.body).toMatch(/Already decided[\s\S]*<strong>expired<\/strong>/);
+    expect((await appRow(id)).status).toBe("applied");
+    expect(await count("pending_actions", "status = 'expired'")).toBe(1);
+  });
+
+  it("the sweep marks expired links without anyone opening them", async () => {
+    await mcp.call("add_application", { company: "Stripe", role: "SDE" });
+    await mcp.call("add_application", { company: "Razorpay", role: "SDE" });
+    await writePool.query(
+      "update pending_actions set expires_at = now() - interval '1 second' where summary like '%Stripe%'",
+    );
+
+    expect(await expireOldPendingActions()).toBe(1);
+    expect(await count("pending_actions", "status = 'expired'")).toBe(1);
+    expect(await count("pending_actions", "status = 'pending'")).toBe(1);
   });
 });

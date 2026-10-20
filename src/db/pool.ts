@@ -2,6 +2,7 @@ import path from "node:path";
 import { readFileSync } from "node:fs";
 import pg from "pg";
 import { env, projectRoot } from "../config.js";
+import { log } from "../log.js";
 
 // Return DATE columns as "YYYY-MM-DD" strings. By default pg turns them into
 // JS Dates at local midnight, which shifts the day when printed as UTC.
@@ -15,6 +16,8 @@ export function makePool(connectionString: string, label: string): pg.Pool {
     connectionString,
     max: 5,
     connectionTimeoutMillis: 10_000,
+    // If the network drops mid-query, give up instead of leaving the tool call hanging.
+    query_timeout: 15_000,
     idleTimeoutMillis: 30_000,
     allowExitOnIdle: true, // don't keep the process alive after Claude disconnects
     // Encrypt AND verify we are really talking to Supabase, using its CA certificate.
@@ -24,7 +27,7 @@ export function makePool(connectionString: string, label: string): pg.Pool {
   });
   // An idle connection can drop (network blip, Supabase restart). Without a listener
   // that error would crash the server.
-  pool.on("error", (err) => console.error(`pg ${label} pool: idle connection error`, err));
+  pool.on("error", (err) => log.warn({ component: "db", pool: label, err }, "idle connection error"));
   return pool;
 }
 
@@ -35,8 +38,9 @@ export const writePool = makePool(env.DATABASE_URL, "write");
 // Without DATABASE_URL_READER, reads share the write pool: it works, but without least privilege.
 export const readerConfigured = env.DATABASE_URL_READER !== undefined;
 if (!readerConfigured) {
-  console.error(
-    "WARNING: DATABASE_URL_READER is not set, so read tools connect with the full DATABASE_URL role. " +
+  log.warn(
+    { component: "db" },
+    "DATABASE_URL_READER is not set, so read tools connect with the full DATABASE_URL role. " +
       "Run supabase/migrations/003_mcp_reader.sql and set it in .env.",
   );
 }

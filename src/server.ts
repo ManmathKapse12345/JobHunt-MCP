@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { guardHandlers } from "./guard.js";
 import { registerPrompts } from "./prompts/index.js";
 import { registerResources } from "./resources/index.js";
 import { registerReadTools } from "./tools/read/index.js";
@@ -13,6 +14,9 @@ export function createServer(): McpServer {
     name: "jobhunt-mcp",
     version: "0.5.0",
   });
+
+  // First: every tool, resource and prompt registered below gets error handling and logging.
+  guardHandlers(server);
 
   // Registering resources and prompts also advertises those capabilities in `initialize`.
   registerUtilityTools(server);

@@ -16,7 +16,7 @@ Built in TypeScript as a backend-engineering project: layered architecture, leas
 
 **Human-in-the-loop approval.** A write tool first validates the change against the database and builds a summary from database rows (never from text the model wrote). Then:
 - if the client supports **elicitation**, the user gets an approve/decline form inside the chat;
-- otherwise the change is stored in `pending_actions` and the user gets an **approval link**. The link carries a single-use secret (only its SHA-256 hash is stored) that expires after 24 hours. On the deployed server the page also requires signing in with an admin token the model never sees, so a model with a web-fetch tool cannot approve its own change.
+- otherwise the change is stored in `pending_actions` and the user gets an **approval link**. The link carries a single-use secret (only its SHA-256 hash is stored) that expires after 15 minutes. On the deployed server the page also requires signing in with an admin token the model never sees, so a model with a web-fetch tool cannot approve its own change.
 
 Approved changes run in one transaction with an audit event (who approved it, before/after values).
 
@@ -32,11 +32,18 @@ src/
   repos/            SQL, one module per table
   db/               pools (read: mcp_reader, write: postgres), transactions
   hitl/             approval flow: elicitation, links, approval page, sign-in
-supabase/migrations 001 schema · 002 audit + approvals · 003 mcp_reader role + RLS
+supabase/migrations 001 schema · 002 audit + approvals · 003 mcp_reader role + RLS · 004 15-minute links
 ```
 
 - **Least privilege:** read tools connect as `mcp_reader` (SELECT on three tables, row-level security hides soft-deleted rows, read-only transactions). Writes use a separate pool.
 - **Transports:** stdio for local clients; Streamable HTTP with a bearer token, per-session servers, and a signed-in approval page for the deployed version.
+
+## Hardening
+
+- **Failures become answers, not crashes.** Every tool, resource and prompt is wrapped once (`src/guard.ts`). If the database is unreachable (connection refused, DNS failure, timeout, Postgres shutting down or out of connections), a tool returns an `isError` result telling the model to retry shortly, and a resource or prompt returns a clean JSON-RPC error. Any other bug returns a generic message with a short reference; the stack trace goes only to the log, under the same reference. Raw driver errors never reach the model. A test starts the real stdio server against a database that doesn't exist and checks it answers, stays up and keeps serving.
+- **Rate limit.** The HTTP server allows 120 requests per minute per client IP (`RATE_LIMIT_PER_MINUTE`), counted before the bearer-token check, and answers `429` with `Retry-After` and the standard `RateLimit` headers. `/healthz` is exempt. The approval page's sign-in has its own stricter limit (5 wrong passwords, then a 15-minute block).
+- **15-minute approval links.** A change waiting for approval expires after 15 minutes; a background sweep marks expired links every minute, and an expired link can no longer apply anything.
+- **Structured logs.** One JSON object per line on stderr (stdout carries the MCP protocol in stdio mode), via [pino](https://getpino.io): every tool call with its duration and outcome, every HTTP request with status and timing, approvals, sign-in failures and rate-limit hits. Approval tokens, passwords and auth headers are never logged. `LOG_LEVEL` sets the level; `npx pino-pretty` makes it readable.
 
 ## Running it
 
@@ -63,7 +70,7 @@ npm test           # Vitest: unit + integration
 npm run db:down
 ```
 
-- **98 tests** in about 9 seconds.
+- **128 tests** in about 10 seconds.
 - Integration tests connect the real server to the SDK `Client` over `InMemoryTransport` and call every tool against a real database.
 - **Key test:** for each of the 4 write tools and each way of saying no (decline, cancel, unticked), the database is snapshotted before and after and must be identical. Breaking the approval gate on purpose makes all 12 cases fail.
 - A guard refuses to run tests against anything but a local database.

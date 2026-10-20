@@ -3,6 +3,8 @@
 export const TEST_ENV = {
   DATABASE_URL: "postgresql://postgres@localhost:54329/jobhunt_test",
   DATABASE_URL_READER: "postgresql://mcp_reader@localhost:54329/jobhunt_test",
+  // Keep test output readable; LOG_LEVEL=debug npm test shows the server's logs.
+  LOG_LEVEL: process.env.LOG_LEVEL ?? "silent",
 };
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);

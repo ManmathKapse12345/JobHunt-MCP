@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { RequestId } from "@modelcontextprotocol/sdk/types.js";
+import { log } from "../log.js";
 import { insertPendingAction } from "../repos/pending-actions.js";
 import type { Prepared } from "./actions.js";
 import { approvalUrl } from "./links.js";
@@ -59,7 +60,7 @@ export async function requireApproval(
       };
     } catch (err) {
       // Timed out or the client failed: fall through to a link instead of losing the change.
-      console.error("requireApproval: elicitation failed, using an approval link instead:", err);
+      log.warn({ component: "approvals", tool: prepared.toolName, err }, "elicitation failed, using an approval link instead");
     }
   }
 
@@ -70,6 +71,6 @@ export async function requireApproval(
     summary: prepared.summary,
     tokenHash: hashToken(token),
   });
-  console.error(`requireApproval: ${prepared.toolName} waiting for approval (pending ${row.id})`);
+  log.info({ component: "approvals", tool: prepared.toolName, pendingId: row.id, expiresAt: row.expires_at }, "waiting for approval");
   return { kind: "pending", url: approvalUrl(row.id, token), expiresAt: row.expires_at };
 }

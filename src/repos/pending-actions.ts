@@ -17,6 +17,12 @@ export interface PendingActionRow {
   expires_at: Date;
 }
 
+// How long an approval link stays usable. Short: a change approved long after it was
+// proposed may no longer be what the user wants, and a leaked link is useful only briefly.
+// Set here rather than relying on the column default, so it holds even on a database that
+// has not run 004_pending_ttl.sql yet.
+export const PENDING_TTL_MINUTES = 15;
+
 export async function insertPendingAction(a: {
   toolName: string;
   payload: unknown;
@@ -24,10 +30,10 @@ export async function insertPendingAction(a: {
   tokenHash: string;
 }): Promise<{ id: string; expires_at: Date }> {
   const { rows } = await writePool.query<{ id: string; expires_at: Date }>(
-    `insert into pending_actions (tool_name, payload, summary, token_hash)
-     values ($1, $2, $3, $4)
+    `insert into pending_actions (tool_name, payload, summary, token_hash, expires_at)
+     values ($1, $2, $3, $4, now() + make_interval(mins => $5))
      returning id, expires_at`,
-    [a.toolName, JSON.stringify(a.payload), a.summary, a.tokenHash],
+    [a.toolName, JSON.stringify(a.payload), a.summary, a.tokenHash, PENDING_TTL_MINUTES],
   );
   return rows[0]!;
 }
@@ -37,12 +43,14 @@ export async function getPendingAction(id: string, db: Db = writePool): Promise<
   return rows[0];
 }
 
-// Marks old links as expired so they can no longer be approved.
-export async function expireOldPendingActions(): Promise<void> {
-  await writePool.query(
+// Marks old links as expired. (claimPendingAction already refuses an expired link on its
+// own; this makes the status column say so too.) Returns how many were expired.
+export async function expireOldPendingActions(): Promise<number> {
+  const { rowCount } = await writePool.query(
     `update pending_actions set status = 'expired', decided_at = now()
       where status = 'pending' and expires_at <= now()`,
   );
+  return rowCount ?? 0;
 }
 
 // Atomically moves ONE pending, unexpired action to `status`. Two clicks (or two

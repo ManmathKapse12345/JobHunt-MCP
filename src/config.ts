@@ -2,6 +2,7 @@ import path from "node:path";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { log } from "./log.js";
 
 // The project folder: one level up from this file (dist/ or src/).
 // Claude Desktop does not start the server from here, so ".env" alone would not be found.
@@ -34,13 +35,17 @@ const EnvSchema = z.object({
   // Render sets RENDER_EXTERNAL_URL itself; locally it defaults to http://localhost:<PORT>.
   PUBLIC_URL: z.url().optional(),
   RENDER_EXTERNAL_URL: z.url().optional(),
+  // Requests per minute one client IP may send to the HTTP server (/mcp and the approval page).
+  RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(120),
+
+  LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "fatal", "silent"]).default("info"),
 });
 
 const parsed = EnvSchema.safeParse(process.env);
 if (!parsed.success) {
-  // stderr, never stdout: stdout belongs to the MCP protocol.
-  console.error(`Invalid environment (check ${envPath}):\n${z.prettifyError(parsed.error)}`);
+  log.fatal({ envFile: envPath, problems: z.prettifyError(parsed.error) }, "invalid environment");
   process.exit(1);
 }
 
 export const env = parsed.data;
+log.level = env.LOG_LEVEL;

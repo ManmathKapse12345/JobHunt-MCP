@@ -1,6 +1,7 @@
 import { McpError } from "@modelcontextprotocol/sdk/types.js";
 import { ResourceTemplate, type McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { guardRequest } from "../guard.js";
 import { getApplicationById, listApplications } from "../repos/applications.js";
 import { listEvents } from "../repos/events.js";
 import { applicationDetailText } from "../tools/format.js";
@@ -15,7 +16,8 @@ export function registerApplicationResource(server: McpServer) {
     "application",
     new ResourceTemplate("jobhunt://applications/{id}", {
       // Lets clients show concrete URIs to pick from (resources/list), newest first.
-      list: async () => ({
+      // Inside the template, so guardHandlers (server.ts) can't see it: guard it here.
+      list: guardRequest("resource", "application list", async () => ({
         // title too: otherwise each one inherits the template's title ("Job Application"),
         // which clients like the Inspector show instead of the name.
         resources: (await listApplications({ limit: 50 })).map((a) => ({
@@ -25,7 +27,7 @@ export function registerApplicationResource(server: McpServer) {
           description: `Status: ${a.status}`,
           mimeType: "text/plain",
         })),
-      }),
+      })),
     }),
     {
       title: "Job Application",

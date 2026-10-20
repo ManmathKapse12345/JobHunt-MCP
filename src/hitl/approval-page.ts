@@ -1,5 +1,7 @@
 import type http from "node:http";
+import { isDbUnavailable } from "../db/errors.js";
 import { withTransaction } from "../db/tx.js";
+import { log } from "../log.js";
 import {
   claimPendingAction,
   expireOldPendingActions,
@@ -129,7 +131,7 @@ export function createApprovalHandler(opts: ApprovalPageOptions): Handler {
     }
     if (!secretEquals(form.get("password") ?? "", adminToken)) {
       recordLoginFailure(ip);
-      console.error(`approval page: failed sign-in from ${ip}`);
+      log.warn({ component: "approval-page", ip }, "failed sign-in");
       return send(res, 401, loginPage(next, "Wrong password."));
     }
     clearLoginFailures(ip);
@@ -243,6 +245,23 @@ function loginPage(next: string, error?: string): string {
 
 function notFound(): string {
   return page("Link not found", "<p>This approval link is wrong or incomplete.</p>");
+}
+
+// The handler threw (both servers call this): log it, and show a page instead of a stack trace.
+// Every change is applied in one transaction, so a failure here never leaves half a change.
+export function sendFailure(res: http.ServerResponse, err: unknown) {
+  const dbDown = isDbUnavailable(err);
+  log.error({ component: "approval-page", err, dbUnavailable: dbDown }, "approval page failed");
+  if (res.headersSent) return void res.end();
+  if (dbDown) {
+    return send(
+      res,
+      503,
+      page("Try again in a minute", "<p>The database can't be reached right now. Nothing was changed; reload this page shortly.</p>"),
+      { "Retry-After": "60" },
+    );
+  }
+  send(res, 500, page("Something went wrong", "<p>Nothing was changed. Check the server log.</p>"));
 }
 
 // ---------- tiny HTTP + HTML helpers ----------

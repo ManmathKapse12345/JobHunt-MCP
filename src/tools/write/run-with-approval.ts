@@ -3,6 +3,8 @@ import type { RequestId } from "@modelcontextprotocol/sdk/types.js";
 import { withTransaction } from "../../db/tx.js";
 import { ActionError, executeAction, type Prepared } from "../../hitl/actions.js";
 import { requireApproval } from "../../hitl/requireApproval.js";
+import { log } from "../../log.js";
+import { PENDING_TTL_MINUTES } from "../../repos/pending-actions.js";
 import { text } from "../format.js";
 
 // Shared body of every write tool: prepare -> ask the human -> apply (or hand back a link).
@@ -29,7 +31,7 @@ export async function runWithApproval(
         const message = await withTransaction((client) =>
           executeAction(client, prepared.toolName, prepared.payload, approval.actor),
         );
-        console.error(`${prepared.toolName}: approved and applied`);
+        log.info({ component: "approvals", tool: prepared.toolName, actor: approval.actor }, "approved and applied");
         return text(`The user approved. ${message}`);
       } catch (err) {
         if (err instanceof ActionError) return text(`Approved, but not applied: ${err.message}`, true);
@@ -43,7 +45,7 @@ export async function runWithApproval(
       return text(
         "Nothing has changed yet: this needs the user's approval.\n" +
           "Give the user this link to review and approve or reject it " +
-          `(it expires ${approval.expiresAt.toISOString()}):\n${approval.url}\n\n` +
+          `(it expires in ${PENDING_TTL_MINUTES} minutes, at ${approval.expiresAt.toISOString()}):\n${approval.url}\n\n` +
           `Change waiting for approval:\n${prepared.summary}`,
       );
   }
