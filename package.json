@@ -21,6 +21,9 @@
     "show": "tsx scripts/show.ts",
     "demo:db": "npm run db:up && tsx scripts/demo-seed.ts",
     "demo:show": "tsx scripts/show.ts --demo",
+    "gmail:connect": "tsx scripts/gmail.ts connect",
+    "gmail:status": "tsx scripts/gmail.ts status",
+    "gmail:disconnect": "tsx scripts/gmail.ts disconnect",
     "eval": "npm run build && tsx evals/seed.ts && promptfoo eval -c evals/promptfooconfig.yaml -o evals/results/latest.json --no-cache",
     "eval:summary": "node evals/summarize.mjs evals/results/latest.json",
     "eval:view": "promptfoo view"

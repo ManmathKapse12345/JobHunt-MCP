@@ -39,6 +39,18 @@ const EnvSchema = z.object({
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(120),
 
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "fatal", "silent"]).default("info"),
+
+  // ----- Gmail (optional; docs/gmail-setup.md). Without them, Gmail features say how to set up -----
+  // A "Desktop app" OAuth client from Google Cloud. For desktop apps Google does not treat
+  // the secret as confidential (PKCE protects the flow), but it still belongs in .env, not git.
+  GOOGLE_CLIENT_ID: z.string().endsWith(".apps.googleusercontent.com").optional(),
+  GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
+  // 32 random bytes as base64 or hex. Encrypts stored refresh tokens; losing it means reconnecting.
+  TOKEN_ENCRYPTION_KEY: z
+    .string()
+    .transform((s) => (/^[0-9a-f]{64}$/i.test(s) ? Buffer.from(s, "hex") : Buffer.from(s, "base64")))
+    .refine((b) => b.length === 32, "must be 32 bytes: base64 (44 chars) or hex (64 chars)")
+    .optional(),
 });
 
 const parsed = EnvSchema.safeParse(process.env);

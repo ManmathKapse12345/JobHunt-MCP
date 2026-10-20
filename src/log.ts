@@ -16,7 +16,11 @@ export const log = pino(
     formatters: { level: (label) => ({ level: label }) },
     // Never log secrets, even if one ends up in a logged object by mistake.
     redact: {
-      paths: ["token", "*.token", "password", "*.password", "authorization", "*.authorization", "headers.cookie"],
+      paths: [
+        "token", "*.token", "password", "*.password", "authorization", "*.authorization", "headers.cookie",
+        // Google OAuth. (Not "*.code": that would hide err.code, e.g. ECONNREFUSED.)
+        "refresh_token", "*.refresh_token", "access_token", "*.access_token", "code_verifier", "*.code_verifier",
+      ],
       censor: "[redacted]",
     },
   },

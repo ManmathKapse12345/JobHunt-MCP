@@ -6,7 +6,9 @@ import { assertLocalDatabase } from "../env.js";
 // known state no matter what ran before it.
 export async function resetDb() {
   assertLocalDatabase();
-  await writePool.query("truncate companies, applications, contacts, events, pending_actions restart identity cascade");
+  await writePool.query(
+    "truncate companies, applications, contacts, events, pending_actions, gmail_connections restart identity cascade",
+  );
 }
 
 export interface SeedApplication {
