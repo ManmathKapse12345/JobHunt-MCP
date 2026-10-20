@@ -71,9 +71,12 @@ try {
   // Expected problems (not set up, cancelled, wrong scope) get their message, not a stack.
   if (err instanceof OAuthError) console.error(`\n${err.message}`);
   else if ((err as { code?: string }).code === "42P01") {
+    // pg's message names the table: 'relation "email_messages" does not exist'.
+    const table = /relation "([^"]+)"/.exec((err as Error).message)?.[1] ?? "gmail_connections";
+    const file = table === "email_messages" ? "006_email_messages.sql" : "005_gmail_connections.sql";
     console.error(
-      "\nA Gmail table doesn't exist in this database yet.\n" +
-        "Run supabase/migrations/005_gmail_connections.sql and 006_email_messages.sql (Supabase: SQL editor), then try again.",
+      `\nThe ${table} table doesn't exist in this database yet.\n` +
+        `Run supabase/migrations/${file} (Supabase: SQL editor), then try again.`,
     );
   } else console.error(err);
   process.exitCode = 1;
