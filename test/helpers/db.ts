@@ -7,7 +7,7 @@ import { assertLocalDatabase } from "../env.js";
 export async function resetDb() {
   assertLocalDatabase();
   await writePool.query(
-    "truncate companies, applications, contacts, events, pending_actions, gmail_connections restart identity cascade",
+    "truncate companies, applications, contacts, events, pending_actions, gmail_connections, email_messages restart identity cascade",
   );
 }
 
