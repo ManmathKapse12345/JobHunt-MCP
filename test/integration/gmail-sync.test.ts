@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { readPool, writePool } from "../../src/db/pool.js";
 import { deleteGmailConnection, upsertGmailConnection } from "../../src/repos/gmail-connections.js";
 import { insertEmailMessage } from "../../src/repos/email-messages.js";
+import type { Extractor } from "../../src/google/extract.js";
 import { syncJobEmails } from "../../src/google/sync.js";
 import { count, resetDb } from "../helpers/db.js";
 import { email, fakeGmailSource, fixtureEmails } from "../helpers/fake-gmail-source.js";
@@ -28,7 +29,7 @@ describe("syncJobEmails", () => {
     const { rows } = await writePool.query("select gmail_id, from_header, subject from email_messages order by received_at");
     expect(rows).toEqual([
       { gmail_id: "18f0a1", from_header: "LinkedIn <jobs-noreply@linkedin.com>", subject: "Your application was sent to Acme Robotics" },
-      { gmail_id: "18f0b2", from_header: "Globex Hiring <no-reply@us.greenhouse-mail.io>", subject: "Thank you for applying to Globex" },
+      { gmail_id: "18f0b2", from_header: "Indeed <noreply@indeed.com>", subject: "Thank you for applying to Globex" },
       { gmail_id: "18f0c3", from_header: "Priya Shah <priya.shah@initech.com>", subject: "Interview: Full Stack Intern at Initech" },
     ]);
   });
@@ -90,7 +91,7 @@ describe("syncJobEmails", () => {
     inbox.deliver(
       email({
         id: "18f099",
-        from: "Initech Careers <careers@initech.com>",
+        from: "LinkedIn <jobs-noreply@linkedin.com>",
         subject: "Thank you for applying to Initech",
         receivedAt: new Date("2026-10-08T10:00:00Z"),
       }),
@@ -106,6 +107,90 @@ describe("syncJobEmails", () => {
     expect((await writePool.query("select category from email_messages")).rows[0].category).toBeNull();
     await syncJobEmails(fakeGmailSource([]), connectionId);
     expect((await writePool.query("select category from email_messages")).rows[0].category).toBe("applied");
+  });
+
+  describe("with an extractor", () => {
+    // Records what it was asked to read; answers from a fixed table.
+    function fakeExtractor() {
+      const read: string[] = [];
+      const extractor: Extractor = {
+        model: "fake-haiku",
+        async extract(e) {
+          read.push(e.subject);
+          if (e.subject.includes("Globex")) {
+            return { role: "Backend Developer", kind: "job", eventAt: null, deadlineAt: null };
+          }
+          if (e.subject.includes("Initech")) {
+            const eventAt = e.category === "interview" ? new Date("2026-10-23T09:30:00Z") : null;
+            return { role: "Full Stack Intern", kind: "internship", eventAt, deadlineAt: null };
+          }
+          return { role: null, kind: null, eventAt: null, deadlineAt: null };
+        },
+      };
+      return { extractor, read };
+    }
+
+    it("reads only tracked emails: never one without a confirmation", async () => {
+      const { extractor, read } = fakeExtractor();
+      const r = await syncJobEmails(fakeGmailSource(), connectionId, { extractor });
+      expect(read.sort()).toEqual(["Thank you for applying to Globex", "Your application was sent to Acme Robotics"]);
+      expect(r.extracted).toBe(2);
+      expect(r.tracking.opportunities.find((o) => o.organization === "Globex")).toMatchObject({ role: "Backend Developer", kind: "job" });
+    });
+
+    it("reads each email once, fetching again the ones whose text wasn't kept", async () => {
+      const inbox = fakeGmailSource();
+      await syncJobEmails(inbox, connectionId); // rules only: nothing read
+      const { extractor, read } = fakeExtractor();
+      inbox.gets.length = 0;
+
+      const second = await syncJobEmails(inbox, connectionId, { extractor });
+      expect(second.extracted).toBe(2);
+      expect(inbox.gets.sort()).toEqual(["18f0a1", "18f0b2"]); // re-fetched for their text
+
+      const third = await syncJobEmails(inbox, connectionId, { extractor });
+      expect(third.extracted).toBe(0);
+      expect(read).toHaveLength(2);
+    });
+
+    it("picks up dates, and a later confirmation brings its earlier interview in", async () => {
+      const inbox = fakeGmailSource();
+      const { extractor } = fakeExtractor();
+      await syncJobEmails(inbox, connectionId, { extractor });
+      inbox.deliver(
+        email({
+          id: "18f099",
+          from: "LinkedIn <jobs-noreply@linkedin.com>",
+          subject: "Thank you for applying to Initech",
+          receivedAt: new Date("2026-10-08T10:00:00Z"),
+        }),
+      );
+      const r = await syncJobEmails(inbox, connectionId, { extractor });
+      const initech = r.tracking.opportunities.find((o) => o.organization === "Initech")!;
+      expect(initech).toMatchObject({ role: "Full Stack Intern", kind: "internship" });
+      expect(initech.dates).toEqual([{ at: new Date("2026-10-23T09:30:00Z"), what: "event", category: "interview" }]);
+    });
+
+    it("stops at maxExtract and leaves the rest for next time", async () => {
+      const { extractor } = fakeExtractor();
+      const r = await syncJobEmails(fakeGmailSource(), connectionId, { extractor, maxExtract: 1 });
+      expect(r).toMatchObject({ extracted: 1, extractPending: 1 });
+      const next = await syncJobEmails(fakeGmailSource(), connectionId, { extractor, maxExtract: 1 });
+      expect(next).toMatchObject({ extracted: 1, extractPending: 0 });
+    });
+
+    it("stores the facts, still never the text", async () => {
+      const { extractor } = fakeExtractor();
+      await syncJobEmails(fakeGmailSource(), connectionId, { extractor });
+      const { rows } = await writePool.query("select * from email_messages");
+      const stored = JSON.stringify(rows);
+      for (const m of fixtureEmails()) expect(stored).not.toContain(m.text.split("\n").at(-1));
+      expect(rows.find((r) => r.subject.includes("Globex"))).toMatchObject({
+        role: "Backend Developer",
+        extracted_kind: "job",
+        extracted_by: "fake-haiku",
+      });
+    });
   });
 
   it("records when the account was last synced", async () => {

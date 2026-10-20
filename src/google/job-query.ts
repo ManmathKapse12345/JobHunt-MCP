@@ -26,6 +26,7 @@ export const JOB_SUBJECT_KEYWORDS = [
   '"your application"',
   '"application received"',
   '"application submitted"',
+  '"indeed application"',
   '"successfully submitted"',
   '"thank you for applying"',
   '"thanks for applying"',

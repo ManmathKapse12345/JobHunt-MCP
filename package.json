@@ -27,7 +27,8 @@
     "gmail:sync": "tsx scripts/gmail.ts sync",
     "eval": "npm run build && tsx evals/seed.ts && promptfoo eval -c evals/promptfooconfig.yaml -o evals/results/latest.json --no-cache",
     "eval:summary": "node evals/summarize.mjs evals/results/latest.json",
-    "eval:view": "promptfoo view"
+    "eval:view": "promptfoo view",
+    "eval:extract": "tsx evals/extract/run.ts"
   },
   "keywords": [
     "mcp",

@@ -2,8 +2,9 @@
 //   npm run gmail:connect      opens Google's consent page; read-only access
 //   npm run gmail:status
 //   npm run gmail:disconnect   revokes the access at Google and deletes the saved token
-//   npm run gmail:sync [-- --days 90 --max 1000 --label jobs]
-//                              fetch new job emails, print the confirmed opportunities
+//   npm run gmail:sync [-- --days 90 --max 1000 --label jobs --no-extract]
+//                              fetch new job emails, print the confirmed opportunities;
+//                              with ANTHROPIC_API_KEY, Claude reads their role and dates
 // Uses the database in .env (your real tracker). Add --demo for the local Docker database.
 import { spawn } from "node:child_process";
 
@@ -19,6 +20,7 @@ const { env } = await import("../src/config.js");
 const { getGmailConnection } = await import("../src/repos/gmail-connections.js");
 const { createGmailApiSource, DEFAULT_MAX } = await import("../src/google/gmail-source.js");
 const { syncJobEmails } = await import("../src/google/sync.js");
+const { createClaudeExtractor, ExtractError } = await import("../src/google/extract.js");
 
 const command = process.argv[2];
 
@@ -55,10 +57,15 @@ try {
     if (!row) throw new GmailNotConnected("No Gmail account is connected. Run: npm run gmail:connect");
     const days = flag("--days");
     const max = flag("--max");
+    const extractor =
+      env.ANTHROPIC_API_KEY && !process.argv.includes("--no-extract")
+        ? createClaudeExtractor({ apiKey: env.ANTHROPIC_API_KEY, model: env.EXTRACT_MODEL })
+        : undefined;
     const r = await syncJobEmails(createGmailApiSource(auth), row.id, {
       newerThanDays: days === undefined ? undefined : Number(days),
       label: flag("--label"),
       max: max === undefined ? undefined : Number(max),
+      extractor,
     });
     const { opportunities, unconfirmed, notJob } = r.tracking;
     console.log(`Searched ${row.email}: ${r.matched} matched, ${r.alreadyStored} already stored, ${r.fresh.length} new.`);
@@ -68,8 +75,17 @@ try {
     // Sender, date and subject only; bodies are never printed (or stored).
     console.log(`\nTracked: ${opportunities.length} confirmed opportunities\n`);
     for (const o of opportunities) {
-      console.log(`  ${day(o.confirmedAt)}  ${o.organization}${o.kind ? ` (${o.kind})` : ""}`);
+      const what = [o.role, o.kind].filter(Boolean).join(", ");
+      console.log(`  ${day(o.confirmedAt)}  ${o.organization}${what ? ` (${what})` : ""}`);
       for (const e of o.emails) console.log(`      ${day(e.receivedAt)}  ${e.category.padEnd(10)} ${e.subject}`);
+      for (const d of o.dates) {
+        console.log(`      ${d.what === "event" ? `${d.category} on` : "due by"} ${d.at.toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}`);
+      }
+    }
+    if (extractor) {
+      console.log(`\nRead ${r.extracted} tracked emails with ${extractor.model}${r.extractPending ? `; ${r.extractPending} left for the next sync` : ""}.`);
+    } else {
+      console.log("\n(Rules only. Set ANTHROPIC_API_KEY in .env to also read roles and interview dates.)");
     }
     console.log(`\nIgnored: ${notJob} not about an application, ${unconfirmed.length} with no confirmation email:\n`);
     for (const e of unconfirmed) console.log(`  ${day(e.receivedAt)}  ${e.category.padEnd(10)} ${e.subject}  [${e.from}]`);
@@ -79,7 +95,7 @@ try {
   }
 } catch (err) {
   // Expected problems (not set up, cancelled, wrong scope) get their message, not a stack.
-  if (err instanceof OAuthError) console.error(`\n${err.message}`);
+  if (err instanceof OAuthError || err instanceof ExtractError) console.error(`\n${err.message}`);
   else if ((err as { code?: string }).code === "42P01") {
     // pg's message names the table: 'relation "email_messages" does not exist'.
     const table = /relation "([^"]+)"/.exec((err as Error).message)?.[1] ?? "gmail_connections";
@@ -89,10 +105,13 @@ try {
         `Run supabase/migrations/${file} (Supabase: SQL editor), then try again.`,
     );
   } else if ((err as { code?: string }).code === "42703") {
-    // A column added by a later migration (category, kind, organization).
+    // A column added by a later migration: 007 (category, ...) or 008 (role, extracted_at, ...).
+    const file = /\b(role|extracted_kind|event_at|deadline_at|extracted_at|extracted_by)\b/.test((err as Error).message)
+      ? "008_email_extraction.sql"
+      : "007_email_classification.sql";
     console.error(
       `\n${(err as Error).message}: the database is missing a migration.\n` +
-        "Run supabase/migrations/007_email_classification.sql (Supabase: SQL editor), then try again.",
+        `Run supabase/migrations/${file} (Supabase: SQL editor), then try again.`,
     );
   } else console.error(err);
   process.exitCode = 1;

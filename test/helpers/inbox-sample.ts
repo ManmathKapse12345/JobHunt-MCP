@@ -30,8 +30,9 @@ export const INBOX_SAMPLE: SampleEmail[] = [
   { date: "2026-09-27", from: "Yuva Spark Hackathon <yuvaspark@younoodle.com>", subject: "Your Application Has Been Successfully Submitted for Yuva Spark Energy Tech Hackathon 2026", track: "Yuva Spark Energy Tech Hackathon 2026" },
   { date: "2026-09-29", from: "Yuva Spark Hackathon <yuvaspark@younoodle.com>", subject: "Your Application Has Been Successfully Submitted for Yuva Spark Energy Tech Hackathon 2026", track: "Yuva Spark Energy Tech Hackathon 2026" },
 
-  // ----- follow-ups of a confirmed application: tracked with it -----
+  // ----- follow-ups of a confirmed application, from the site or the company: tracked with it -----
   { date: "2026-10-07", from: "LinkedIn <jobs-noreply@linkedin.com>", subject: "Your application to Software Engineer (IITs only) at Sea Buddies", track: "Sea Buddies" },
+  { date: "2026-10-21", from: "Riya Menon <riya@mindforge.io>", subject: "Interview invitation: SDE-1 at Mindforge", track: "Mindforge" },
 
   // ----- follow-ups with no confirmation behind them: ignored -----
   { date: "2026-10-15", from: "Nebula Labs Technologies <noreply@indeed.com>", subject: "An update on your application from Nebula Labs Technologies", track: null },

@@ -5,6 +5,7 @@ import {
   type EmailCategory,
   type OpportunityKind,
 } from "../google/classify.js";
+import type { Extraction } from "../google/extract.js";
 import type { GmailMessage } from "../google/gmail-source.js";
 
 // Only the write pool: mcp_reader has no access to this table.
@@ -22,6 +23,13 @@ export interface EmailMessageRow {
   category: EmailCategory | null; // null until classified
   kind: OpportunityKind | null;
   organization: string | null;
+  // From the email text, by the extractor (008). extracted_at null = not read yet.
+  role: string | null;
+  extracted_kind: OpportunityKind | null;
+  event_at: Date | null;
+  deadline_at: Date | null;
+  extracted_at: Date | null;
+  extracted_by: string | null;
 }
 
 // Which of these Gmail ids are already stored for the account.
@@ -79,7 +87,25 @@ export async function listClassifiedEmails(connectionId: string, db: Db = writeP
     category: r.category!,
     kind: r.kind,
     organization: r.organization,
+    extracted: r.extracted_at
+      ? { role: r.role, kind: r.extracted_kind, eventAt: r.event_at, deadlineAt: r.deadline_at }
+      : undefined,
   }));
+}
+
+export async function saveExtraction(
+  connectionId: string,
+  gmailId: string,
+  x: Extraction,
+  model: string,
+  db: Db = writePool,
+): Promise<void> {
+  await db.query(
+    `update email_messages
+        set role = $3, extracted_kind = $4, event_at = $5, deadline_at = $6, extracted_at = now(), extracted_by = $7
+      where connection_id = $1 and gmail_id = $2`,
+    [connectionId, gmailId, x.role, x.kind, x.eventAt, x.deadlineAt, model],
+  );
 }
 
 export async function markSynced(connectionId: string, db: Db = writePool): Promise<void> {

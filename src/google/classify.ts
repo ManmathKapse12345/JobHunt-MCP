@@ -1,15 +1,19 @@
 // What a job email says happened, and which emails are worth tracking.
 //
 // The rule: an opportunity (job, internship, competition, hackathon) is real only if a
-// confirmation arrived: "Thank you for applying", "Your application was sent to ...",
-// "Successfully submitted", "Thanks for registering". Any other email about it (interview,
+// confirmation arrived, from any job site or company: "Thank you for applying", "Your
+// application was sent to ...", "Indeed Application: ...", "Successfully submitted",
+// "Thanks for registering". Any other email about it (interview,
 // assessment, rejection, offer, status update) is tracked only when the same organisation
 // (or the same thread) already has a confirmation. Everything else is ignored, however
 // job-like its subject: ads that say "confirm your application", job alerts, interview-prep
 // newsletters, programs you never applied to.
 //
 // Sender and subject only, so the rules can be rerun over stored emails whenever they
-// change (bodies are never stored).
+// change (bodies are never stored). What the email TEXT says (role, dates) is read later,
+// by extract.ts, and only for emails this gate lets through.
+
+import type { Extraction } from "./extract.js";
 
 export type EmailCategory = "applied" | "interview" | "assessment" | "rejected" | "offer" | "update" | "not_job";
 export type OpportunityKind = "job" | "internship" | "competition";
@@ -35,6 +39,7 @@ const NOISE_SUBJECT = [
 const NOISE_SENDER = [/jobalert/i, /newsletters?-noreply/i, /jobs-listings@/i, /@match\.indeed\.com/i];
 
 const CONFIRMATION = [
+  /^indeed application:/i, // Indeed Apply's "Indeed Application: <role>"
   /\byour application (was|has been) (successfully )?(sent|submitted|received)\b/i,
   /\bapplication (received|submitted)\b/i,
   /\b(has been|was) successfully (submitted|registered)\b/i,
@@ -73,7 +78,7 @@ function kindOf(subject: string): OpportunityKind | null {
 
 // Sites that send email on a company's behalf: their name is never the organisation.
 const PLATFORM_DOMAINS = [
-  "linkedin.com", "internshala.com", "indeed.com", "naukri.com", "unstop.news", "unstop.com",
+  "linkedin.com", "internshala.com", "indeed.com", "indeedemail.com", "naukri.com", "unstop.news", "unstop.com",
   "workablemail.com", "workable.com", "greenhouse.io", "greenhouse-mail.io", "lever.co",
   "ashbyhq.com", "smartrecruiters.com", "myworkday.com", "wellfound.com", "younoodle.com",
   "google.com", "gmail.com", "outlook.com", "yahoo.com",
@@ -155,11 +160,16 @@ export interface ClassifiedEmail {
   category: EmailCategory;
   kind: OpportunityKind | null;
   organization: string | null;
+  // What the extractor read from the text (extract.ts); undefined = not read yet.
+  extracted?: Extraction;
 }
 
 export interface Opportunity {
   organization: string; // as the first confirmation wrote it
-  kind: OpportunityKind | null;
+  kind: OpportunityKind | null; // the rules' guess from subjects, else the extractor's
+  role: string | null; // the first role the extractor found
+  // The interviews, assessments and deadlines the emails mention, oldest first.
+  dates: Array<{ at: Date; what: "event" | "deadline"; category: EmailCategory }>;
   confirmedAt: Date; // the earliest confirmation
   emails: ClassifiedEmail[]; // oldest first: the confirmation(s), then what followed
 }
@@ -189,6 +199,8 @@ export function selectTracked(emails: ClassifiedEmail[]): TrackingResult {
         key,
         organization: e.organization ?? e.subject,
         kind: e.kind,
+        role: null,
+        dates: [],
         confirmedAt: e.receivedAt,
         emails: [e],
         threads: new Set([e.threadId]),
@@ -212,7 +224,19 @@ export function selectTracked(emails: ClassifiedEmail[]): TrackingResult {
     } else unconfirmed.push(e);
   }
 
-  for (const o of opportunities) o.emails.sort((a, b) => a.receivedAt.getTime() - b.receivedAt.getTime());
+  for (const o of opportunities) {
+    o.emails.sort((a, b) => a.receivedAt.getTime() - b.receivedAt.getTime());
+    // What the extractor read fills in what subjects didn't say; it never decides membership.
+    for (const e of o.emails) {
+      const x = e.extracted;
+      if (!x) continue;
+      o.role ??= x.role;
+      o.kind ??= x.kind;
+      if (x.eventAt) o.dates.push({ at: x.eventAt, what: "event", category: e.category });
+      if (x.deadlineAt) o.dates.push({ at: x.deadlineAt, what: "deadline", category: e.category });
+    }
+    o.dates.sort((a, b) => a.at.getTime() - b.at.getTime());
+  }
   return {
     opportunities: opportunities
       .sort((a, b) => b.confirmedAt.getTime() - a.confirmedAt.getTime())

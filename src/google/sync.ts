@@ -5,8 +5,10 @@ import {
   knownGmailIds,
   listClassifiedEmails,
   markSynced,
+  saveExtraction,
 } from "../repos/email-messages.js";
 import { selectTracked, type TrackingResult } from "./classify.js";
+import type { Extractor } from "./extract.js";
 import { DEFAULT_MAX, type GmailMessage, type GmailSource } from "./gmail-source.js";
 import { buildJobQuery, type JobQueryOptions } from "./job-query.js";
 
@@ -22,7 +24,19 @@ export interface SyncResult {
   fresh: GmailMessage[];
   // Over everything stored for the account, not just this sync.
   tracking: TrackingResult;
+  extracted: number; // tracked emails the extractor read this time
+  extractPending: number; // left for the next sync (over maxExtract)
 }
+
+export interface SyncOptions extends JobQueryOptions {
+  max?: number;
+  // Without one, the sync is rules only.
+  extractor?: Extractor;
+  // At most this many model calls per sync (cost cap). Default 100.
+  maxExtract?: number;
+}
+
+const DEFAULT_MAX_EXTRACT = 100;
 
 const slog = log.child({ component: "gmail-sync" });
 // messages.get costs 5 quota units; a few at a time keeps a big first sync near Gmail's
@@ -32,7 +46,7 @@ const PARALLEL_GETS = 4;
 export async function syncJobEmails(
   source: GmailSource,
   connectionId: string,
-  opts: JobQueryOptions & { max?: number } = {},
+  opts: SyncOptions = {},
 ): Promise<SyncResult> {
   const query = buildJobQuery(opts);
   const ids = await source.search(query, opts.max ?? DEFAULT_MAX);
@@ -50,7 +64,24 @@ export async function syncJobEmails(
   }
   // All stored emails, not only the new ones: rules may have changed since the last sync.
   const reclassified = await classifyStoredEmails(connectionId);
-  const tracking = selectTracked(await listClassifiedEmails(connectionId));
+  let tracking = selectTracked(await listClassifiedEmails(connectionId));
+
+  // Read role and dates from tracked emails not read yet. Only these go to the model:
+  // never an email the gate ignored. Older ones are fetched again (their text was never kept).
+  let extracted = 0;
+  let extractPending = 0;
+  if (opts.extractor) {
+    const freshById = new Map(fresh.map((m) => [m.id, m]));
+    const pending = tracking.opportunities.flatMap((o) => o.emails).filter((e) => !e.extracted);
+    extractPending = Math.max(0, pending.length - (opts.maxExtract ?? DEFAULT_MAX_EXTRACT));
+    for (const e of pending.slice(0, opts.maxExtract ?? DEFAULT_MAX_EXTRACT)) {
+      const text = freshById.get(e.id)?.text ?? (await source.get(e.id)).text;
+      const x = await opts.extractor.extract({ ...e, text });
+      await saveExtraction(connectionId, e.id, x, opts.extractor.model);
+      extracted++;
+    }
+    if (extracted > 0) tracking = selectTracked(await listClassifiedEmails(connectionId));
+  }
   await markSynced(connectionId);
 
   slog.info(
@@ -61,8 +92,10 @@ export async function syncJobEmails(
       reclassified,
       opportunities: tracking.opportunities.length,
       unconfirmed: tracking.unconfirmed.length,
+      extracted,
+      extractPending,
     },
     "gmail sync done",
   );
-  return { query, matched: ids.length, alreadyStored: known.size, fresh, tracking };
+  return { query, matched: ids.length, alreadyStored: known.size, fresh, tracking, extracted, extractPending };
 }

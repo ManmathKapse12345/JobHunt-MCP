@@ -51,6 +51,11 @@ const EnvSchema = z.object({
     .transform((s) => (/^[0-9a-f]{64}$/i.test(s) ? Buffer.from(s, "hex") : Buffer.from(s, "base64")))
     .refine((b) => b.length === 32, "must be 32 bytes: base64 (44 chars) or hex (64 chars)")
     .optional(),
+
+  // ----- Reading roles and dates out of tracked job emails (optional) -----
+  // Without a key the Gmail sync still runs, rules only.
+  ANTHROPIC_API_KEY: z.string().min(1).optional(),
+  EXTRACT_MODEL: z.string().min(1).default("claude-haiku-5-5"),
 });
 
 const parsed = EnvSchema.safeParse(process.env);

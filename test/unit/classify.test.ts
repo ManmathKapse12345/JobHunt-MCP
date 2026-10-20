@@ -38,9 +38,14 @@ describe("the confirmation gate on a real inbox", () => {
     expect(hackathon.emails).toHaveLength(2);
   });
 
-  it("keeps a follow-up with its confirmation, in date order", () => {
+  it("keeps a follow-up with its confirmation, in date order, whoever sent it", () => {
     const sea = opportunities.find((o) => o.organization === "Sea Buddies")!;
     expect(sea.emails.map((e) => e.category)).toEqual(["applied", "update"]);
+    const mindforge = opportunities.find((o) => o.organization === "Mindforge")!;
+    expect(mindforge.emails.map((e) => e.from)).toEqual([
+      "LinkedIn <jobs-noreply@linkedin.com>",
+      "Riya Menon <riya@mindforge.io>",
+    ]);
   });
 
   it("reports what it ignored", () => {
@@ -50,11 +55,19 @@ describe("the confirmation gate on a real inbox", () => {
 });
 
 describe("classifyEmail", () => {
+  const LINKEDIN = "LinkedIn <jobs-noreply@linkedin.com>";
+
   it.each([
-    ["Thank you for applying to Globex", "applied"],
-    ["Thanks for registering for CodeSprint 2026", "applied"],
-    ["You have successfully registered for HackIndia", "applied"],
-    ["Your application has been received", "applied"],
+    [LINKEDIN, "Alex, your application was sent to Globex"],
+    ["Indeed Apply <indeedapply@indeed.com>", "Indeed Application: Backend Developer"],
+    ["Globex Careers <careers@globex.com>", "Thank you for applying to Globex"],
+    ["Workable <noreply@candidates.workablemail.com>", "Thanks for applying to Globex"],
+    ["Unstop <noreply@unstop.com>", "You have successfully registered for CodeSprint 2026"],
+  ])("a confirmation from any job site or company counts: %s / %s", (from, subject) => {
+    expect(classifyEmail({ from, subject }).category).toBe("applied");
+  });
+
+  it.each([
     ["Interview: Full Stack Intern at Initech", "interview"],
     ["Invitation: online assessment for Globex", "assessment"],
     ["Your HackerRank coding test for Initech", "assessment"],
@@ -69,9 +82,9 @@ describe("classifyEmail", () => {
   });
 
   it("knows competitions and internships from the subject", () => {
-    expect(classifyEmail({ from: "x@y.com", subject: "Thanks for registering for the Build Hackathon" }).kind).toBe("competition");
-    expect(classifyEmail({ from: "x@y.com", subject: "Thank you for applying: SDE Intern" }).kind).toBe("internship");
-    expect(classifyEmail({ from: "x@y.com", subject: "Thank you for applying" }).kind).toBeNull();
+    expect(classifyEmail({ from: "x@y.com", subject: "Assessment for the Build Hackathon" }).kind).toBe("competition");
+    expect(classifyEmail({ from: LINKEDIN, subject: "Thank you for applying: SDE Intern" }).kind).toBe("internship");
+    expect(classifyEmail({ from: LINKEDIN, subject: "Thank you for applying" }).kind).toBeNull();
   });
 });
 
@@ -108,7 +121,7 @@ describe("selectTracked", () => {
     const interview = e({ id: "2", from: "HR <hr@initech.com>", subject: "Interview: SDE at Initech", receivedAt: new Date("2026-10-15") });
     expect(selectTracked([interview]).opportunities).toEqual([]);
 
-    const applied = e({ id: "1", from: "Initech Careers <careers@initech.com>", subject: "Thank you for applying to Initech" });
+    const applied = e({ id: "1", from: "LinkedIn <jobs-noreply@linkedin.com>", subject: "Your application was sent to Initech" });
     const { opportunities, unconfirmed } = selectTracked([interview, applied]);
     expect(opportunities).toHaveLength(1);
     expect(opportunities[0]!.emails.map((x) => x.id)).toEqual(["1", "2"]);
@@ -116,7 +129,7 @@ describe("selectTracked", () => {
   });
 
   it("a reply in the confirmation's thread counts even when it names no company", () => {
-    const applied = e({ id: "1", threadId: "T", subject: "Thank you for applying to Globex" });
+    const applied = e({ id: "1", threadId: "T", from: "Indeed <noreply@indeed.com>", subject: "Thank you for applying to Globex" });
     const reply = e({ id: "2", threadId: "T", subject: "Re: interview", receivedAt: new Date("2026-10-12") });
     expect(selectTracked([applied, reply]).opportunities[0]!.emails).toHaveLength(2);
   });

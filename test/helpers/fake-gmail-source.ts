@@ -50,7 +50,7 @@ export function fixtureEmails(): GmailMessage[] {
     }),
     email({
       id: "18f0b2",
-      from: "Globex Hiring <no-reply@us.greenhouse-mail.io>",
+      from: "Indeed <noreply@indeed.com>",
       subject: "Thank you for applying to Globex",
       receivedAt: new Date("2026-10-12T14:30:00Z"),
       text: "Hi Manmath,\nThanks for applying for the Backend Developer role at Globex. Our team will review your application.",

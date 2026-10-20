@@ -43,7 +43,7 @@ It encrypts the saved Google token in the database. Keep it only in `.env` (neve
 
 ## 5. Create the tables and connect
 
-1. Run these in the Supabase SQL editor, in order: [`005_gmail_connections.sql`](../supabase/migrations/005_gmail_connections.sql), [`006_email_messages.sql`](../supabase/migrations/006_email_messages.sql), [`007_email_classification.sql`](../supabase/migrations/007_email_classification.sql).
+1. Run these in the Supabase SQL editor, in order: [`005_gmail_connections.sql`](../supabase/migrations/005_gmail_connections.sql), [`006_email_messages.sql`](../supabase/migrations/006_email_messages.sql), [`007_email_classification.sql`](../supabase/migrations/007_email_classification.sql), [`008_email_extraction.sql`](../supabase/migrations/008_email_extraction.sql).
 2. Run:
 
    ```bash
@@ -62,7 +62,9 @@ npm run gmail:sync -- --days 180 --max 1000   # first time: go far back
 npm run gmail:sync                            # after that: the last 30 days
 ```
 
-It prints the confirmed opportunities and what it ignored. An application, internship, competition or hackathon is tracked only when its confirmation email is there ("Thank you for applying", "Your application was sent to ...", "Thanks for registering"); interviews, assessments and rejections are tracked only for those. Only sender, subject and date are stored, never the email text.
+It prints the confirmed opportunities and what it ignored. A job, internship, competition or hackathon is tracked only when its confirmation email is there, from any job site or company ("Thank you for applying", "Your application was sent to ...", "Indeed Application: ...", "Thanks for registering"); interviews, assessments and rejections are tracked only for those. Emails with no confirmation behind them (ads, "selection" emails for things you never applied to) are ignored. Only sender, subject and date are stored, never the email text.
+
+With `ANTHROPIC_API_KEY` in `.env`, the sync also asks Claude Haiku to read each **tracked** email once and note the role, whether it's a job, internship or competition, and any interview/assessment time or deadline. Emails the confirmation rule ignored are never sent. At most 100 model calls per sync; add `--no-extract` to skip it. Measure it with `npm run eval:extract` (16 labelled emails).
 
 ## Good to know
 
