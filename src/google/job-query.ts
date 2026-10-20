@@ -12,6 +12,7 @@ export const JOB_SENDERS = [
   "myworkday.com",
   "ashbyhq.com",
   "smartrecruiters.com",
+  "workablemail.com",
 ];
 
 // Job alerts ("30 new jobs for you"): never about an application you made.
@@ -19,19 +20,30 @@ export const EXCLUDED_SENDERS = ["jobalerts-noreply@linkedin.com", "jobs-listing
 
 // For LinkedIn and companies that email from their own domain: only clearly
 // job-related subjects. (LinkedIn's confirmation is "Your application was sent to ...".)
+// Broad on purpose: classify.ts throws out what has no confirmation behind it, but it can
+// only see what the search brings in.
 export const JOB_SUBJECT_KEYWORDS = [
   '"your application"',
   '"application received"',
+  '"application submitted"',
+  '"successfully submitted"',
   '"thank you for applying"',
   '"thanks for applying"',
+  '"thank you for registering"',
+  '"thanks for registering"',
+  '"successfully registered"',
+  '"registration confirmed"',
   "interview",
   "assessment",
   '"coding challenge"',
   "internship",
+  "hackathon",
 ];
 
 export interface JobQueryOptions {
-  newerThanDays?: number; // default 30
+  // Default 30. Go further back on a first sync: an interview only counts if its
+  // "thank you for applying" is in the database too.
+  newerThanDays?: number;
   label?: string; // only mail with this Gmail label, e.g. "jobs"
 }
 

@@ -1,4 +1,10 @@
 import { writePool, type Db } from "../db/pool.js";
+import {
+  type ClassifiedEmail,
+  classifyEmail,
+  type EmailCategory,
+  type OpportunityKind,
+} from "../google/classify.js";
 import type { GmailMessage } from "../google/gmail-source.js";
 
 // Only the write pool: mcp_reader has no access to this table.
@@ -13,6 +19,9 @@ export interface EmailMessageRow {
   subject: string;
   received_at: Date;
   fetched_at: Date;
+  category: EmailCategory | null; // null until classified
+  kind: OpportunityKind | null;
+  organization: string | null;
 }
 
 // Which of these Gmail ids are already stored for the account.
@@ -35,6 +44,42 @@ export async function insertEmailMessage(connectionId: string, m: GmailMessage, 
     [connectionId, m.id, m.threadId, m.from, m.subject, m.receivedAt],
   );
   return rowCount === 1;
+}
+
+// Rerun the rules over every stored email of the account. Returns how many rows changed.
+export async function classifyStoredEmails(connectionId: string, db: Db = writePool): Promise<number> {
+  const { rows } = await db.query<{ id: string; from_header: string; subject: string }>(
+    "select id, from_header, subject from email_messages where connection_id = $1",
+    [connectionId],
+  );
+  if (rows.length === 0) return 0;
+  const c = rows.map((r) => classifyEmail({ from: r.from_header, subject: r.subject }));
+  const { rowCount } = await db.query(
+    `update email_messages e
+        set category = v.category, kind = v.kind, organization = v.organization
+       from unnest($1::uuid[], $2::text[], $3::text[], $4::text[]) as v (id, category, kind, organization)
+      where e.id = v.id
+        and (e.category, e.kind, e.organization) is distinct from (v.category, v.kind, v.organization)`,
+    [rows.map((r) => r.id), c.map((x) => x.category), c.map((x) => x.kind), c.map((x) => x.organization)],
+  );
+  return rowCount ?? 0;
+}
+
+export async function listClassifiedEmails(connectionId: string, db: Db = writePool): Promise<ClassifiedEmail[]> {
+  const { rows } = await db.query<EmailMessageRow>(
+    "select * from email_messages where connection_id = $1 and category is not null order by received_at",
+    [connectionId],
+  );
+  return rows.map((r) => ({
+    id: r.gmail_id,
+    threadId: r.thread_id,
+    from: r.from_header,
+    subject: r.subject,
+    receivedAt: r.received_at,
+    category: r.category!,
+    kind: r.kind,
+    organization: r.organization,
+  }));
 }
 
 export async function markSynced(connectionId: string, db: Db = writePool): Promise<void> {

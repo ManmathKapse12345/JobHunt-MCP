@@ -53,12 +53,36 @@ export function getMessage(fetchFn: Fetch, accessToken: string, id: string): Pro
   return gmailGet<RawMessage>(fetchFn, accessToken, `/messages/${encodeURIComponent(id)}?format=full`);
 }
 
+// Gmail's per-user quota ("Units per minute per user"): slow down and try again.
+// https://developers.google.com/gmail/api/reference/quota
+export class GmailRateLimited extends OAuthError {
+  constructor(
+    message: string,
+    readonly retryAfterMs?: number,
+  ) {
+    super(message);
+  }
+}
+
 async function gmailGet<T>(fetchFn: Fetch, accessToken: string, path: string): Promise<T> {
   const res = await fetchFn(`${API}${path}`, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (res.status === 401) throw new ReconnectRequired("Gmail refused the access token; connect Gmail again.");
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
-    throw new OAuthError(`Gmail API ${path}: ${res.status}${body.error?.message ? ` (${body.error.message})` : ""}`);
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: { message?: string; errors?: Array<{ reason?: string }> };
+    };
+    const message = `Gmail API ${path}: ${res.status}${body.error?.message ? ` (${body.error.message})` : ""}`;
+    // Google reports a rate limit as 429, or as 403 with a rate-limit reason.
+    const rateLimited =
+      res.status === 429 ||
+      (res.status === 403 &&
+        (body.error?.errors?.some((e) => /rateLimitExceeded/i.test(e.reason ?? "")) ||
+          /quota exceeded|rate limit/i.test(body.error?.message ?? "")));
+    if (rateLimited) {
+      const retryAfter = Number(res.headers.get("retry-after"));
+      throw new GmailRateLimited(message, retryAfter > 0 ? retryAfter * 1000 : undefined);
+    }
+    throw new OAuthError(message);
   }
   return (await res.json()) as T;
 }

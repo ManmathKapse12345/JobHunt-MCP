@@ -1,5 +1,6 @@
 import type { GmailAuth } from "./gmail-auth.js";
-import { getMessage, listMessages, type MessagePart, type RawMessage } from "./gmail-api.js";
+import { log } from "../log.js";
+import { GmailRateLimited, getMessage, listMessages, type MessagePart, type RawMessage } from "./gmail-api.js";
 import type { Fetch } from "./oauth.js";
 
 // Where the sync gets email from. The real one calls the Gmail API; tests use a fake
@@ -22,21 +23,47 @@ export interface GmailSource {
   get(id: string): Promise<GmailMessage>;
 }
 
-export const DEFAULT_MAX = 100;
+export const DEFAULT_MAX = 300;
 const PAGE_SIZE = 100; // Gmail allows up to 500 per page
 
-export function createGmailApiSource(auth: Pick<GmailAuth, "accessToken">, fetchFn: Fetch = fetch): GmailSource {
+// Over Gmail's per-minute quota: wait 2 s, 4 s, ... up to a minute (the quota's window),
+// unless Google says how long. Six retries cover a bit over two minutes.
+const MAX_RETRIES = 6;
+const MAX_WAIT_MS = 60_000;
+const slog = log.child({ component: "gmail-api" });
+
+export function createGmailApiSource(
+  auth: Pick<GmailAuth, "accessToken">,
+  fetchFn: Fetch = fetch,
+  deps: { sleep?: (ms: number) => Promise<void> } = {},
+): GmailSource {
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+
+  async function retrying<T>(call: () => Promise<T>): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await call();
+      } catch (err) {
+        if (!(err instanceof GmailRateLimited) || attempt >= MAX_RETRIES) throw err;
+        const waitMs = err.retryAfterMs ?? Math.min(2000 * 2 ** attempt, MAX_WAIT_MS);
+        slog.warn({ waitMs, attempt: attempt + 1 }, "gmail rate limit; waiting before retrying");
+        await sleep(waitMs);
+      }
+    }
+  }
+
   return {
     async search(query, max = DEFAULT_MAX) {
       const ids: string[] = [];
       let pageToken: string | undefined;
       do {
-        const { token } = await auth.accessToken();
-        const page = await listMessages(fetchFn, token, {
-          q: query,
-          maxResults: Math.min(PAGE_SIZE, max - ids.length),
-          pageToken,
-        });
+        const page = await retrying(async () =>
+          listMessages(fetchFn, (await auth.accessToken()).token, {
+            q: query,
+            maxResults: Math.min(PAGE_SIZE, max - ids.length),
+            pageToken,
+          }),
+        );
         for (const m of page.messages ?? []) ids.push(m.id);
         pageToken = page.nextPageToken;
       } while (pageToken && ids.length < max);
@@ -44,8 +71,7 @@ export function createGmailApiSource(auth: Pick<GmailAuth, "accessToken">, fetch
     },
 
     async get(id) {
-      const { token } = await auth.accessToken();
-      return parseMessage(await getMessage(fetchFn, token, id));
+      return parseMessage(await retrying(async () => getMessage(fetchFn, (await auth.accessToken()).token, id)));
     },
   };
 }

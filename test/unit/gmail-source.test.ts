@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { RawMessage } from "../../src/google/gmail-api.js";
+import { GmailRateLimited, type RawMessage } from "../../src/google/gmail-api.js";
 import { createGmailApiSource, htmlToText, parseMessage } from "../../src/google/gmail-source.js";
 import { buildJobQuery } from "../../src/google/job-query.js";
 import type { Fetch } from "../../src/google/oauth.js";
@@ -86,6 +86,65 @@ describe("createGmailApiSource", () => {
     expect(new URL(f.urls[0]!).searchParams.get("q")).toBe("from:lever.co");
     expect(new URL(f.urls[1]!).searchParams.get("maxResults")).toBe("1"); // only asks for what's missing
     expect(f.auths).toEqual(["Bearer ya29.t", "Bearer ya29.t"]);
+  });
+
+  describe("Gmail's per-user rate limit", () => {
+    const quota403 = () =>
+      new Response(
+        JSON.stringify({
+          error: {
+            code: 403,
+            message: "Quota exceeded for quota metric 'Total Query Cost' and limit 'Units per minute per user'",
+            errors: [{ reason: "rateLimitExceeded" }],
+          },
+        }),
+        { status: 403 },
+      );
+    const ok = () => new Response(JSON.stringify({ id: "m1", threadId: "t1", internalDate: "1", payload: {} }), { status: 200 });
+
+    it("waits and retries a 403 quota error, backing off 2 s, 4 s, ...", async () => {
+      const replies = [quota403(), quota403(), ok()];
+      const waits: number[] = [];
+      const source = createGmailApiSource(auth, async () => replies.shift()!, {
+        sleep: async (ms) => void waits.push(ms),
+      });
+      expect((await source.get("m1")).id).toBe("m1");
+      expect(waits).toEqual([2000, 4000]);
+    });
+
+    it("honours Retry-After on a 429", async () => {
+      const replies = [new Response("{}", { status: 429, headers: { "retry-after": "7" } }), ok()];
+      const waits: number[] = [];
+      const source = createGmailApiSource(auth, async () => replies.shift()!, { sleep: async (ms) => void waits.push(ms) });
+      await source.get("m1");
+      expect(waits).toEqual([7000]);
+    });
+
+    it("gives up after six retries, and never retries other errors", async () => {
+      let calls = 0;
+      const limited = createGmailApiSource(
+        auth,
+        async () => {
+          calls++;
+          return quota403();
+        },
+        { sleep: async () => {} },
+      );
+      await expect(limited.get("m1")).rejects.toBeInstanceOf(GmailRateLimited);
+      expect(calls).toBe(7);
+
+      calls = 0;
+      const broken = createGmailApiSource(
+        auth,
+        async () => {
+          calls++;
+          return new Response("{}", { status: 500 });
+        },
+        { sleep: async () => {} },
+      );
+      await expect(broken.get("m1")).rejects.toThrow(/500/);
+      expect(calls).toBe(1);
+    });
   });
 
   it("an empty search (no `messages` field) is an empty list", async () => {

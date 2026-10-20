@@ -70,6 +70,44 @@ describe("syncJobEmails", () => {
     expect(inbox.searches[0]).toContain("newer_than:7d");
   });
 
+  it("classifies what it stores, and tracks only confirmed opportunities", async () => {
+    const inbox = fakeGmailSource();
+    const first = await syncJobEmails(inbox, connectionId);
+    // Acme and Globex sent confirmations; Initech's interview has none behind it.
+    expect(first.tracking.opportunities.map((o) => o.organization)).toEqual(["Globex", "Acme Robotics"]);
+    expect(first.tracking.unconfirmed.map((e) => e.subject)).toEqual(["Interview: Full Stack Intern at Initech"]);
+
+    const { rows } = await writePool.query(
+      "select subject, category, kind, organization from email_messages order by received_at",
+    );
+    expect(rows).toEqual([
+      { subject: "Your application was sent to Acme Robotics", category: "applied", kind: null, organization: "Acme Robotics" },
+      { subject: "Thank you for applying to Globex", category: "applied", kind: null, organization: "Globex" },
+      { subject: "Interview: Full Stack Intern at Initech", category: "interview", kind: "internship", organization: "Initech" },
+    ]);
+
+    // Initech's confirmation turns up in a later sync: the earlier interview now counts.
+    inbox.deliver(
+      email({
+        id: "18f099",
+        from: "Initech Careers <careers@initech.com>",
+        subject: "Thank you for applying to Initech",
+        receivedAt: new Date("2026-10-08T10:00:00Z"),
+      }),
+    );
+    const second = await syncJobEmails(inbox, connectionId);
+    const initech = second.tracking.opportunities.find((o) => o.organization === "Initech")!;
+    expect(initech.emails.map((e) => e.category)).toEqual(["applied", "interview"]);
+    expect(second.tracking.unconfirmed).toEqual([]);
+  });
+
+  it("reclassifies rows stored before the rules ran (or under older rules)", async () => {
+    await insertEmailMessage(connectionId, fixtureEmails()[0]!);
+    expect((await writePool.query("select category from email_messages")).rows[0].category).toBeNull();
+    await syncJobEmails(fakeGmailSource([]), connectionId);
+    expect((await writePool.query("select category from email_messages")).rows[0].category).toBe("applied");
+  });
+
   it("records when the account was last synced", async () => {
     await syncJobEmails(fakeGmailSource([]), connectionId);
     const { rows } = await writePool.query("select last_synced_at from gmail_connections where id = $1", [connectionId]);

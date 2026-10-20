@@ -41,9 +41,9 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 
 It encrypts the saved Google token in the database. Keep it only in `.env` (never in git). If you lose or change it, just connect again.
 
-## 5. Create the table and connect
+## 5. Create the tables and connect
 
-1. Run [`supabase/migrations/005_gmail_connections.sql`](../supabase/migrations/005_gmail_connections.sql) in the Supabase SQL editor.
+1. Run these in the Supabase SQL editor, in order: [`005_gmail_connections.sql`](../supabase/migrations/005_gmail_connections.sql), [`006_email_messages.sql`](../supabase/migrations/006_email_messages.sql), [`007_email_classification.sql`](../supabase/migrations/007_email_classification.sql).
 2. Run:
 
    ```bash
@@ -54,6 +54,15 @@ It encrypts the saved Google token in the database. Keep it only in `.env` (neve
 3. The terminal prints `Connected you@gmail.com (read-only)`. Check any time with `npm run gmail:status`.
 
 To try it without touching your real tracker, add `--demo` (uses the local Docker database): `npm run gmail:connect -- --demo`.
+
+## 6. Sync
+
+```bash
+npm run gmail:sync -- --days 180 --max 1000   # first time: go far back
+npm run gmail:sync                            # after that: the last 30 days
+```
+
+It prints the confirmed opportunities and what it ignored. An application, internship, competition or hackathon is tracked only when its confirmation email is there ("Thank you for applying", "Your application was sent to ...", "Thanks for registering"); interviews, assessments and rejections are tracked only for those. Only sender, subject and date are stored, never the email text.
 
 ## Good to know
 
