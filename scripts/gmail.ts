@@ -9,7 +9,6 @@
 //   npm run gmail:propose      turn what the stored emails show into tracker changes, in one
 //                              approval page (tick what to apply); no Gmail or model calls
 // Uses the database in .env (your real tracker). Add --demo for the local Docker database.
-import { spawn } from "node:child_process";
 import type { OpportunityMatch } from "../src/google/match.js";
 
 if (process.argv.includes("--demo")) {
@@ -30,9 +29,7 @@ const { listAllApplications } = await import("../src/repos/applications.js");
 const { proposeFromMatches } = await import("../src/google/proposals.js");
 const { selectTracked } = await import("../src/google/classify.js");
 const { listClassifiedEmails } = await import("../src/repos/email-messages.js");
-const { createApprovalLink } = await import("../src/hitl/requireApproval.js");
-const { startApprovalServer } = await import("../src/hitl/approval-server.js");
-const { getPendingAction } = await import("../src/repos/pending-actions.js");
+const { approveInBrowser, openBrowser } = await import("./approve.js");
 
 const command = process.argv[2];
 
@@ -131,22 +128,7 @@ try {
     if (!batch) {
       console.log("Nothing to change: your tracker already matches your job emails. (Run gmail:sync first for new ones.)");
     } else {
-      await startApprovalServer();
-      const link = await createApprovalLink(batch);
-      console.log(`${batch.summary}\n\nNothing has changed yet. Tick what to apply on this page:\n\n  ${link.url}\n`);
-      openBrowser(link.url);
-      console.log(`Waiting for your decision (the link expires at ${link.expiresAt.toLocaleTimeString()})...`);
-      const decided = await waitForDecision(link.id, link.expiresAt);
-      if (!decided || decided.status === "expired") console.log("\nThe link expired. Nothing was changed; run gmail:propose again.");
-      else if (decided.status === "rejected") console.log("\nRejected. Nothing was changed.");
-      else if (decided.error) console.log(`\nNot applied: ${decided.error}`);
-      else {
-        const result = decided.result as { message: string; items: Array<{ summary: string; outcome: string; message: string }> };
-        console.log(`\n${result.message}`);
-        for (const it of result.items) {
-          console.log(`  ${it.outcome.padEnd(8)} ${it.summary}${it.outcome === "failed" ? `\n           ${it.message}` : ""}`);
-        }
-      }
+      await approveInBrowser(batch);
     }
   } else {
     console.log("Usage: npm run gmail:connect | gmail:status | gmail:disconnect | gmail:sync | gmail:propose");
@@ -191,17 +173,6 @@ function trackerLine(m: Omit<OpportunityMatch, "opportunity">): string {
   return `${a.role} at ${a.company}, ${a.status}${m.suggestedStatus ? `; emails say ${m.suggestedStatus} (not changed)` : ""}`;
 }
 
-// The decision is made on the approval page (this process's, or another jobhunt-mcp's
-// on the same port: either way it lands in pending_actions).
-async function waitForDecision(id: string, expiresAt: Date) {
-  while (Date.now() < expiresAt.getTime() + 5_000) {
-    const row = await getPendingAction(id);
-    if (row && row.status !== "pending") return row;
-    await new Promise((r) => setTimeout(r, 2_000));
-  }
-  return undefined;
-}
-
 function day(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
@@ -210,14 +181,4 @@ function day(d: Date): string {
 function flag(name: string): string | undefined {
   const i = process.argv.indexOf(name);
   return i === -1 ? undefined : process.argv[i + 1];
-}
-
-// Best effort; the URL is printed anyway. rundll32 avoids cmd.exe, which would cut the
-// URL at its first "&".
-function openBrowser(url: string) {
-  const [cmd, args] =
-    process.platform === "win32" ? ["rundll32", ["url.dll,FileProtocolHandler", url]]
-    : process.platform === "darwin" ? ["open", [url]]
-    : ["xdg-open", [url]];
-  spawn(cmd as string, args as string[], { stdio: "ignore", detached: true }).on("error", () => {}).unref();
 }

@@ -74,6 +74,16 @@ Each tracked opportunity is also shown next to your tracker, without changing an
 
 Then **No reply yet** lists the applications with no assessment, interview, offer or rejection, by days since the last email. After 30 days they're marked *ghosted* (`--ghost-days 21` to change it). Ghosted is only a report: it never changes a status and never counts as a rejection. Hackathons and competitions aren't listed.
 
+### Past applications from LinkedIn
+
+Applications older than your inbox, or without a confirmation email, can come from LinkedIn's own export: **Settings → Data privacy → Get a copy of your data**, tick **Job applications**, **Request archive**. LinkedIn emails a download link (it can take up to a day). Unzip it, then:
+
+```bash
+npm run linkedin:import -- "C:/Users/you/Downloads/Basic_LinkedInDataExport"
+```
+
+Only company, job title, job URL and application date are read into the tracker; contact details, résumé name and screening answers are never stored or printed. Rows you already track are skipped (same company and title, "Stripe Inc." = "Stripe"); a near match ("SDE" vs "SDE Intern" at the same company) is listed for you to decide instead of added. Everything else is added as *applied*, source *LinkedIn*, through the same approval page (up to 100 per page).
+
 ### From Claude Desktop
 
 Once Gmail is connected, ask Claude *"check my email for job updates"*: it calls `sync_job_emails` and gets the same report. Claude only sees the organisation, role, category and dates the rules and Gemini took from each email, never a subject, sender or body. Each call reads at most 10 emails with Gemini, so the chat isn't kept waiting; ask again to read more. Then *"apply those updates"* calls `propose_email_updates`: you get one approval with a checkbox per change (in the chat if your client supports it, otherwise the approval page link).
