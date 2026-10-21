@@ -114,7 +114,7 @@ describe("syncJobEmails", () => {
     function fakeExtractor() {
       const read: string[] = [];
       const extractor: Extractor = {
-        model: "fake-haiku",
+        model: "fake-gemini",
         async extract(e) {
           read.push(e.subject);
           if (e.subject.includes("Globex")) {
@@ -188,7 +188,7 @@ describe("syncJobEmails", () => {
       expect(rows.find((r) => r.subject.includes("Globex"))).toMatchObject({
         role: "Backend Developer",
         extracted_kind: "job",
-        extracted_by: "fake-haiku",
+        extracted_by: "fake-gemini",
       });
     });
   });

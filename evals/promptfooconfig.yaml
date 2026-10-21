@@ -14,20 +14,17 @@ prompts:
   - file://prompt.json
 
 providers:
-  # Claude Haiku 5.5 (ANTHROPIC_API_KEY in .env). promptfoo runs the MCP tool loop.
-  - id: anthropic:messages:claude-haiku-5-5
-    label: haiku-5.5
-    config:
-      max_tokens: 4096
-      mcp:
-        enabled: true
-        server: { name: jobhunt, command: node, args: [evals/server.mjs] }
-  # Without API credit, the same 50 cases run on a local model through evals/provider.mjs
-  # (its own MCP tool loop): ollama pull qwen3:4b, then use
+  # Gemini 3.8 Flash (GEMINI_API_KEY in .env) through evals/provider.mjs, which runs the
+  # MCP tool loop itself. The free tier's daily request cap is far below one full run
+  # (50 cases, several requests each, plus the grader): use a paid-tier key, or run a few
+  # cases at a time with --filter-pattern.
+  - id: file://provider.mjs
+    label: gemini-3.8-flash
+    config: { backend: gemini, model: gemini-3.8-flash }
+  # Free and offline instead: ollama pull qwen3:4b, then use
   # - id: file://provider.mjs
   #   label: qwen3-4b
   #   config: { backend: ollama, model: "qwen3:4b" }
-  # (backend: gemini also works, but the free tier allows ~20 requests/day per model.)
 
 # A few cases at a time: gentle on API rate limits, and the cases share one test database
 # (safe, because nothing in an eval can apply a write).
@@ -36,8 +33,10 @@ evaluateOptions:
 
 defaultTest:
   options:
-    # llm-rubric grader. promptfoo's default grader is OpenAI; use Claude instead.
-    provider: anthropic:messages:claude-haiku-5-5
+    # llm-rubric grader. promptfoo's default grader is OpenAI; use Gemini instead (no tools, JSON out).
+    provider:
+      id: file://provider.mjs
+      config: { backend: gemini, model: gemini-3.8-flash, tools: false, json: true }
   assert:
     # Nothing in an eval can approve a change, so every case must leave the data untouched.
     - type: javascript

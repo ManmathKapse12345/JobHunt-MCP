@@ -4,7 +4,7 @@
 //   npm run gmail:disconnect   revokes the access at Google and deletes the saved token
 //   npm run gmail:sync [-- --days 90 --max 1000 --label jobs --no-extract]
 //                              fetch new job emails, print the confirmed opportunities;
-//                              with ANTHROPIC_API_KEY, Claude reads their role and dates
+//                              with GEMINI_API_KEY, Gemini reads their role and dates
 // Uses the database in .env (your real tracker). Add --demo for the local Docker database.
 import { spawn } from "node:child_process";
 
@@ -20,7 +20,7 @@ const { env } = await import("../src/config.js");
 const { getGmailConnection } = await import("../src/repos/gmail-connections.js");
 const { createGmailApiSource, DEFAULT_MAX } = await import("../src/google/gmail-source.js");
 const { syncJobEmails } = await import("../src/google/sync.js");
-const { createClaudeExtractor, ExtractError } = await import("../src/google/extract.js");
+const { createGeminiExtractor, ExtractError } = await import("../src/google/extract.js");
 
 const command = process.argv[2];
 
@@ -58,8 +58,8 @@ try {
     const days = flag("--days");
     const max = flag("--max");
     const extractor =
-      env.ANTHROPIC_API_KEY && !process.argv.includes("--no-extract")
-        ? createClaudeExtractor({ apiKey: env.ANTHROPIC_API_KEY, model: env.EXTRACT_MODEL })
+      env.GEMINI_API_KEY && !process.argv.includes("--no-extract")
+        ? createGeminiExtractor({ apiKey: env.GEMINI_API_KEY, model: env.EXTRACT_MODEL })
         : undefined;
     const r = await syncJobEmails(createGmailApiSource(auth), row.id, {
       newerThanDays: days === undefined ? undefined : Number(days),
@@ -85,7 +85,7 @@ try {
     if (extractor) {
       console.log(`\nRead ${r.extracted} tracked emails with ${extractor.model}${r.extractPending ? `; ${r.extractPending} left for the next sync` : ""}.`);
     } else {
-      console.log("\n(Rules only. Set ANTHROPIC_API_KEY in .env to also read roles and interview dates.)");
+      console.log("\n(Rules only. Set GEMINI_API_KEY in .env to also read roles and interview dates.)");
     }
     console.log(`\nIgnored: ${notJob} not about an application, ${unconfirmed.length} with no confirmation email:\n`);
     for (const e of unconfirmed) console.log(`  ${day(e.receivedAt)}  ${e.category.padEnd(10)} ${e.subject}  [${e.from}]`);
@@ -95,7 +95,10 @@ try {
   }
 } catch (err) {
   // Expected problems (not set up, cancelled, wrong scope) get their message, not a stack.
-  if (err instanceof OAuthError || err instanceof ExtractError) console.error(`\n${err.message}`);
+  if (err instanceof OAuthError) console.error(`\n${err.message}`);
+  else if (err instanceof ExtractError) {
+    console.error(`\n${err.message}\nEmails read so far are saved; the next sync continues from there (or add --no-extract).`);
+  }
   else if ((err as { code?: string }).code === "42P01") {
     // pg's message names the table: 'relation "email_messages" does not exist'.
     const table = /relation "([^"]+)"/.exec((err as Error).message)?.[1] ?? "gmail_connections";

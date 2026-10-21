@@ -12,7 +12,7 @@
 //
 // config:
 //   backend     "ollama" (local, default) or "gemini" (GEMINI_API_KEY)
-//   model       e.g. qwen3:4b (ollama) or gemini-2.5-flash (gemini)
+//   model       e.g. qwen3:4b (ollama) or gemini-3.8-flash (gemini)
 //   tools       false = plain chat with no MCP (used as the llm-rubric grader)
 //   json        true = ask the model for JSON output (grader)
 //   maxTurns    tool rounds per case (default 8, like promptfoo's max_tool_calls)
@@ -25,7 +25,7 @@ export default class McpLoopProvider {
   constructor(options = {}) {
     this.config = options.config ?? {};
     this.backend = this.config.backend ?? "ollama";
-    this.model = this.config.model ?? (this.backend === "gemini" ? "gemini-2.5-flash" : "qwen3:4b");
+    this.model = this.config.model ?? (this.backend === "gemini" ? "gemini-3.8-flash" : "qwen3:4b");
     this.useTools = this.config.tools !== false;
     this.maxTurns = this.config.maxTurns ?? 8;
     this.mcp = undefined; // started on first use, shared by every case

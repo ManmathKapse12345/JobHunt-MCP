@@ -1,6 +1,6 @@
 // What promptfoo starts (over stdio) instead of dist/index.js.
 //
-// promptfoo loads .env (for ANTHROPIC_API_KEY) and passes its environment to this
+// promptfoo loads .env (for GEMINI_API_KEY) and passes its environment to this
 // process, so DATABASE_URL here would be your real Supabase tracker. Evals must only
 // ever see the seeded test database, so this OVERWRITES both URLs before the server
 // reads them (src/config.ts never overrides variables that are already set).

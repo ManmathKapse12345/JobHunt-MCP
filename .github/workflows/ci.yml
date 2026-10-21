@@ -1,6 +1,6 @@
 # CI: lint, typecheck, build, migrations and Vitest on every push and pull request.
-# Evals (promptfoo against Claude) only run when started by hand:
-#   Actions -> ci -> Run workflow   (needs the ANTHROPIC_API_KEY repository secret)
+# Evals (promptfoo against Gemini) only run when started by hand:
+#   Actions -> ci -> Run workflow   (needs the GEMINI_API_KEY repository secret)
 #
 # Postgres is a service container on the same address as docker-compose.yml
 # (localhost:54329, trust auth, database jobhunt_test), so test/env.ts and
@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       evals:
-        description: Also run the promptfoo evals (50 cases on Claude Haiku, about $0.06)
+        description: Also run the promptfoo evals (50 cases on Gemini 3.8 Flash)
         type: boolean
         default: true
 
@@ -100,13 +100,13 @@ jobs:
           --health-timeout 3s
           --health-retries 20
     env:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       PROMPTFOO_DISABLE_TELEMETRY: "1"
     steps:
       - name: Check the API key secret
         run: |
-          if [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "::error::Add an ANTHROPIC_API_KEY repository secret (Settings -> Secrets and variables -> Actions)."
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "::error::Add a GEMINI_API_KEY repository secret (Settings -> Secrets and variables -> Actions)."
             exit 1
           fi
 

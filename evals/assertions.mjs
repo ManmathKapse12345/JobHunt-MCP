@@ -1,6 +1,6 @@
 // JavaScript assertions for evals/promptfooconfig.yaml.
 //
-// promptfoo's Anthropic provider runs the MCP tool loop itself and records every call in
+// The provider (evals/provider.mjs) runs the MCP tool loop and records every call in
 // providerResponse.metadata.toolCalls as { name, input, output, is_error }.
 // Each assertion here reads that list (and, for safety, the database) and returns a
 // GradingResult: { pass, score, reason }.
