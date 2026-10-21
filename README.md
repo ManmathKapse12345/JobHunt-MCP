@@ -11,9 +11,9 @@
 
 An [MCP](https://modelcontextprotocol.io) server that lets AI assistants (Claude Desktop, Cursor, Claude Code) read and manage a job-application tracker in Postgres, where **the AI can propose a change, but only a human can apply it.** It can also read your job email (Gmail, read-only), work out what changed, and put upcoming interviews on your calendar, all behind the same approval step.
 
-<!-- DEMO: record with docs/demo-script.md, save as docs/demo.gif, then replace this comment with:
-![Demo: ask, approve, the database updates](docs/demo.gif)
--->
+https://github.com/user-attachments/assets/3142f35b-ee2c-48cd-809c-3fd9f3c25072
+
+
 
 - **Human-in-the-loop writes:** every write stops at an approval gate (an in-chat form, or a single-use link that expires in 15 minutes). Several changes arrive as one list with a checkbox each; only the ticked ones apply, each behind its own savepoint. A test proves that no "no" ever changes a row.
 - **Job email, safely:** Gmail is read-only, bodies are never stored, only emails behind a "thanks for applying" confirmation are tracked, and the model never sees a subject, sender or body: only organisation, role, category and dates, labelled as untrusted.
