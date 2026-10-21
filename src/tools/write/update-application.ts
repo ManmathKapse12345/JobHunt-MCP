@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { isoDate } from "../../dates.js";
 import { prepareUpdate } from "../../hitl/actions.js";
+import { approvalUi } from "../approval-app.js";
 import { runWithApproval } from "./run-with-approval.js";
 
 export function registerUpdateApplication(server: McpServer) {
@@ -26,6 +27,7 @@ export function registerUpdateApplication(server: McpServer) {
         appliedOn: isoDate.optional().describe("Date they applied, YYYY-MM-DD"),
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+      _meta: approvalUi, // the in-chat approval panel, where the client can show one
     },
     (input, extra) => runWithApproval(server, extra.requestId, () => prepareUpdate(input)),
   );

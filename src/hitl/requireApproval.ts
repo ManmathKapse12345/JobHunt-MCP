@@ -10,7 +10,8 @@ export type Approval =
   // selected: for apply_batch, the indexes of the items the user ticked.
   | { kind: "approved"; actor: string; selected?: number[] }
   | { kind: "declined"; reason: string }
-  | { kind: "pending"; url: string; expiresAt: Date };
+  // id and token: the in-chat approval panel (tools/approval-app.ts) decides with them.
+  | { kind: "pending"; url: string; expiresAt: Date; id: string; token: string };
 
 // How long the approval form may stay open in the client before we give up on it.
 const ELICITATION_TIMEOUT_MS = 10 * 60_000;
@@ -93,7 +94,7 @@ async function askBatch(server: McpServer, prepared: Prepared, relatedRequestId?
 
 // Store the change in pending_actions and return its one-time link. Also used without an
 // MCP client (npm run gmail:propose).
-export async function createApprovalLink(prepared: Prepared): Promise<{ id: string; url: string; expiresAt: Date }> {
+export async function createApprovalLink(prepared: Prepared): Promise<{ id: string; url: string; expiresAt: Date; token: string }> {
   const token = newToken();
   const row = await insertPendingAction({
     toolName: prepared.toolName,
@@ -102,5 +103,5 @@ export async function createApprovalLink(prepared: Prepared): Promise<{ id: stri
     tokenHash: hashToken(token),
   });
   log.info({ component: "approvals", tool: prepared.toolName, pendingId: row.id, expiresAt: row.expires_at }, "waiting for approval");
-  return { id: row.id, url: approvalUrl(row.id, token), expiresAt: row.expires_at };
+  return { id: row.id, url: approvalUrl(row.id, token), expiresAt: row.expires_at, token };
 }

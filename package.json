@@ -56,6 +56,7 @@
     "@types/express": "^5.0.6",
     "@types/node": "^26.6.5",
     "@types/pg": "^8.23.1",
+    "happy-dom": "^20.14.5",
     "promptfoo": "^0.124.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",

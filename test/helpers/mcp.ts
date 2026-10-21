@@ -8,12 +8,20 @@ export type ToolResult = { content: Array<{ type: string; text?: string }>; isEr
 
 // The real server and a real SDK client, joined by an in-memory pipe: the same JSON-RPC
 // messages as stdio or HTTP (schema validation, elicitation...) without a process or socket.
-export async function connectClient(opts: { elicitation: boolean; name?: string; gmail?: GmailDeps }) {
+// apps: the client says it can show MCP Apps (like Claude Desktop); the server then offers
+// the approval panel.
+export async function connectClient(opts: { elicitation: boolean; name?: string; gmail?: GmailDeps; apps?: boolean }) {
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
-  const server = createServer({ gmail: opts.gmail });
+  const server = createServer({ gmail: opts.gmail, approvalPanel: opts.apps });
   const client = new Client(
     { name: opts.name ?? "vitest", version: "0.0.1" },
-    { capabilities: opts.elicitation ? { elicitation: { form: {} } } : {} },
+    {
+      capabilities: {
+        ...(opts.elicitation ? { elicitation: { form: {} } } : {}),
+        // What Claude Desktop sends.
+        ...(opts.apps ? { extensions: { "io.modelcontextprotocol/ui": { mimeTypes: ["text/html;profile=mcp-app"] } } } : {}),
+      },
+    },
   );
   await server.connect(serverSide);
   await client.connect(clientSide);

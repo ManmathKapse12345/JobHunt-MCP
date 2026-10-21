@@ -1,15 +1,8 @@
 import type http from "node:http";
 import { isDbUnavailable } from "../db/errors.js";
-import { withTransaction } from "../db/tx.js";
 import { log } from "../log.js";
-import {
-  claimPendingAction,
-  expireOldPendingActions,
-  getPendingAction,
-  recordOutcome,
-  type PendingActionRow,
-} from "../repos/pending-actions.js";
-import { ActionError, type BatchItem, type BatchOutcome, batchItems, executeAction, executeBatch } from "./actions.js";
+import type { PendingActionRow } from "../repos/pending-actions.js";
+import { type BatchItem, type BatchOutcome, batchItems } from "./actions.js";
 import {
   clearedSessionCookie,
   clearLoginFailures,
@@ -21,7 +14,8 @@ import {
   sessionCookie,
   sessionIsValid,
 } from "./admin-session.js";
-import { secretEquals, tokenMatches } from "./token.js";
+import { type Decision, decide, findWithToken } from "./decide.js";
+import { secretEquals } from "./token.js";
 
 // The web page for approving changes when the MCP client has no elicitation support.
 //   GET  /approve/<id>?token=...   shows the change, with Approve / Reject buttons
@@ -101,13 +95,9 @@ export function createApprovalHandler(opts: ApprovalPageOptions): Handler {
       const row = await findWithToken(id, form.get("token") ?? "");
       if (!row) return send(res, 404, notFound());
       const decision = form.get("decision");
-      if (decision === "approve" && row.tool_name === "apply_batch") {
-        const ticked = form.getAll("item").map(Number).filter(Number.isInteger);
-        return send(res, 200, withSignOut(ticked.length ? await approveBatch(row, ticked) : await reject(row)));
-      }
-      if (decision === "approve") return send(res, 200, withSignOut(await approve(row)));
-      if (decision === "reject") return send(res, 200, withSignOut(await reject(row)));
-      return send(res, 400, page("Bad request", "<p>Unknown decision.</p>"));
+      if (decision !== "approve" && decision !== "reject") return send(res, 400, page("Bad request", "<p>Unknown decision.</p>"));
+      const ticked = row.tool_name === "apply_batch" ? form.getAll("item").map(Number).filter(Number.isInteger) : undefined;
+      return send(res, 200, withSignOut(decisionPage(await decide(row, decision, "user via approval link", ticked))));
     }
 
     res.setHeader("Allow", "GET, POST");
@@ -169,57 +159,19 @@ function clientIp(req: http.IncomingMessage): string {
   return (req as { ip?: string }).ip ?? req.socket.remoteAddress ?? "unknown";
 }
 
-// Wrong id and wrong token look identical, so the page never confirms an id exists.
-async function findWithToken(id: string, token: string): Promise<PendingActionRow | undefined> {
-  await expireOldPendingActions();
-  const row = await getPendingAction(id);
-  return row && token && tokenMatches(token, row.token_hash) ? row : undefined;
-}
-
-async function approve(row: PendingActionRow): Promise<string> {
-  try {
-    // Claim + apply + record in ONE transaction: if applying fails, the claim is undone too.
-    const message = await withTransaction(async (client) => {
-      const claimed = await claimPendingAction(client, row.id, "approved");
-      if (!claimed) return undefined;
-      const msg = await executeAction(client, claimed.tool_name, claimed.payload, "user via approval link");
-      await recordOutcome(client, row.id, { result: { message: msg } });
-      return msg;
-    });
-    if (message === undefined) return alreadyDecided(row.id);
-    return page("Approved", `<p class="ok">${esc(message)}</p><p>You can close this tab and tell Claude it's done.</p>`);
-  } catch (err) {
-    if (!(err instanceof ActionError)) throw err;
-    // You approved, but the change no longer applies (e.g. it was edited meanwhile).
-    // Close the link anyway and keep the reason.
-    await withTransaction(async (client) => {
-      if (await claimPendingAction(client, row.id, "approved")) {
-        await recordOutcome(client, row.id, { error: err.message });
-      }
-    });
-    return page("Could not apply", `<p class="bad">${esc(err.message)}</p><p>Nothing was changed.</p>`);
-  }
-}
-
-// Only the ticked items. Claim + apply + record in one transaction; each item has its own
-// savepoint (executeBatch), so one that no longer applies doesn't undo the others.
-async function approveBatch(row: PendingActionRow, ticked: number[]): Promise<string> {
-  try {
-    const done = await withTransaction(async (client) => {
-      const claimed = await claimPendingAction(client, row.id, "approved");
-      if (!claimed) return undefined;
-      const outcome = await executeBatch(client, claimed.payload, "user via approval link", ticked);
-      await recordOutcome(client, row.id, { result: outcome });
-      return outcome;
-    });
-    if (done === undefined) return alreadyDecided(row.id);
-    return page("Approved", `<p class="ok">${esc(done.message)}</p>${outcomeList(done.items)}<p>You can close this tab.</p>`);
-  } catch (err) {
-    if (!(err instanceof ActionError)) throw err;
-    await withTransaction(async (client) => {
-      if (await claimPendingAction(client, row.id, "approved")) await recordOutcome(client, row.id, { error: err.message });
-    });
-    return page("Could not apply", `<p class="bad">${esc(err.message)}</p><p>Nothing was changed.</p>`);
+function decisionPage(d: Decision): string {
+  switch (d.kind) {
+    case "approved":
+      return page(
+        "Approved",
+        `<p class="ok">${esc(d.message)}</p>${d.items ? outcomeList(d.items) : ""}<p>You can close this tab and tell Claude it's done.</p>`,
+      );
+    case "rejected":
+      return page("Rejected", "<p>Nothing was changed.</p>");
+    case "not-applied":
+      return page("Could not apply", `<p class="bad">${esc(d.message)}</p><p>Nothing was changed.</p>`);
+    case "already":
+      return page("Already decided", `<p>This change is already <strong>${esc(d.status)}</strong>. Nothing more was done.</p>`);
   }
 }
 
@@ -228,20 +180,6 @@ function outcomeList(items: BatchOutcome[]): string {
   return `<ul class="items">${items
     .map((it) => `<li><strong class="${it.outcome === "failed" ? "bad" : it.outcome === "applied" ? "ok" : ""}">${label[it.outcome]}</strong> ${esc(it.summary)}${it.outcome === "failed" ? `<br><span class="meta">${esc(it.message)}</span>` : ""}</li>`)
     .join("")}</ul>`;
-}
-
-async function reject(row: PendingActionRow): Promise<string> {
-  const claimed = await withTransaction((client) => claimPendingAction(client, row.id, "rejected"));
-  if (!claimed) return alreadyDecided(row.id);
-  return page("Rejected", "<p>Nothing was changed.</p>");
-}
-
-async function alreadyDecided(id: string): Promise<string> {
-  const row = await getPendingAction(id);
-  return page(
-    "Already decided",
-    `<p>This change is already <strong>${esc(row?.status ?? "gone")}</strong>. Nothing more was done.</p>`,
-  );
 }
 
 function showAction(row: PendingActionRow, token: string): string {

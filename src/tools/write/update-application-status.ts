@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { prepareStatusChange } from "../../hitl/actions.js";
 import { APPLICATION_STATUSES } from "../../repos/applications.js";
+import { approvalUi } from "../approval-app.js";
 import { runWithApproval } from "./run-with-approval.js";
 
 export function registerUpdateApplicationStatus(server: McpServer) {
@@ -25,6 +26,7 @@ export function registerUpdateApplicationStatus(server: McpServer) {
         note: z.string().trim().min(1).optional().describe("Why, e.g. 'OA link received by email'"),
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+      _meta: approvalUi, // the in-chat approval panel, where the client can show one
     },
     (input, extra) => runWithApproval(server, extra.requestId, () => prepareStatusChange(input)),
   );

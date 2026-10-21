@@ -14,6 +14,7 @@ import { listAllApplications } from "../repos/applications.js";
 import { listClassifiedEmails } from "../repos/email-messages.js";
 import { getGmailConnection } from "../repos/gmail-connections.js";
 import { isoDay, text } from "./format.js";
+import { approvalUi } from "./approval-app.js";
 import { runWithApproval } from "./write/run-with-approval.js";
 
 // The Gmail tools: read what the job emails say, and propose tracker changes from them.
@@ -116,6 +117,7 @@ export function registerGmailTools(server: McpServer, deps: GmailDeps = defaultG
         "If the reply contains an approval link, show it to the user.",
       inputSchema: {},
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      _meta: approvalUi, // the in-chat approval panel, where the client can show one
     },
     async (_input, extra) => {
       const row = await getGmailConnection();

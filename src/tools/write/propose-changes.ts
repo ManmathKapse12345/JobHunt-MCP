@@ -12,6 +12,7 @@ import {
 } from "../../hitl/actions.js";
 import { APPLICATION_STATUSES } from "../../repos/applications.js";
 import { text } from "../format.js";
+import { approvalUi } from "../approval-app.js";
 import { runWithApproval } from "./run-with-approval.js";
 
 // Several changes in ONE approval: a list with a checkbox per change, and only the ticked
@@ -77,6 +78,7 @@ export function registerProposeChanges(server: McpServer) {
           .describe('Each change: {action:"status", id, status, note?} | {action:"edit", id, ...fields} | {action:"add", company, role, ...}'),
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+      _meta: approvalUi, // the in-chat approval panel, where the client can show one
     },
     async ({ changes }, extra) => {
       const prepared: Prepared[] = [];

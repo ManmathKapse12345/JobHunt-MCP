@@ -9,7 +9,8 @@ import { createServer } from "./server.js";
 
 installCrashHandlers();
 
-const server = createServer();
+// The approval panel too: clients that show MCP Apps (Claude Desktop) approve in the chat.
+const server = createServer({ approvalPanel: true });
 
 // The local page that approval links point to (used when the client can't elicit).
 await startApprovalServer();

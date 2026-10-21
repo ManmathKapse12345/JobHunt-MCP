@@ -3,6 +3,7 @@ import { z } from "zod";
 import { isoDate } from "../../dates.js";
 import { prepareAdd } from "../../hitl/actions.js";
 import { APPLICATION_STATUSES } from "../../repos/applications.js";
+import { approvalUi } from "../approval-app.js";
 import { runWithApproval } from "./run-with-approval.js";
 
 export function registerAddApplication(server: McpServer) {
@@ -32,6 +33,7 @@ export function registerAddApplication(server: McpServer) {
         notes: z.string().trim().min(1).optional().describe("Anything else the user mentioned"),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      _meta: approvalUi, // the in-chat approval panel, where the client can show one
     },
     (input, extra) => runWithApproval(server, extra.requestId, () => prepareAdd(input)),
   );

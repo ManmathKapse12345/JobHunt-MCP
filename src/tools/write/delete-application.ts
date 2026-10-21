@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { prepareDelete } from "../../hitl/actions.js";
+import { approvalUi } from "../approval-app.js";
 import { runWithApproval } from "./run-with-approval.js";
 
 export function registerDeleteApplication(server: McpServer) {
@@ -23,6 +24,7 @@ export function registerDeleteApplication(server: McpServer) {
         reason: z.string().trim().min(1).optional().describe("Why, e.g. 'duplicate entry'"),
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+      _meta: approvalUi, // the in-chat approval panel, where the client can show one
     },
     (input, extra) => runWithApproval(server, extra.requestId, () => prepareDelete(input)),
   );
