@@ -21,6 +21,11 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Once the daily quota is gone, every later case would fail the same way: skip them with
+// the reason instead of calling the API again (and printing a stack trace each time).
+let quotaGone;
+class QuotaExhausted extends Error {}
+
 export default class McpLoopProvider {
   constructor(options = {}) {
     this.config = options.config ?? {};
@@ -54,6 +59,17 @@ export default class McpLoopProvider {
   }
 
   async callApi(prompt) {
+    if (quotaGone) return { error: `Not run: ${quotaGone}` };
+    try {
+      return await this.run(prompt);
+    } catch (err) {
+      if (!(err instanceof QuotaExhausted)) throw err;
+      quotaGone = err.message;
+      return { error: err.message };
+    }
+  }
+
+  async run(prompt) {
     const { system, messages } = parsePrompt(prompt);
     const mcp = this.useTools ? await this.connect() : undefined;
     const chat =
@@ -217,7 +233,7 @@ async function geminiWithRetry(ai, ApiError, request, attempts = 8) {
       // A wait of hours means the DAILY quota is used up: fail now with the reason instead of sleeping.
       if (waitMs > 120_000) {
         const quota = /"quotaValue":\s*"(\d+)"/.exec(String(err.message))?.[1];
-        throw new Error(
+        throw new QuotaExhausted(
           `${request.model}: daily free-tier quota exhausted${quota ? ` (${quota} requests/day)` : ""}; ` +
             `Google says retry in ${Math.round(waitMs / 3_600_000)}h`,
         );

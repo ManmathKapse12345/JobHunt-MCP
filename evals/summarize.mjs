@@ -18,7 +18,9 @@ for (const r of rows) {
       .filter((c) => !c.pass)
       .map((c) => c.reason)
       .join(" / ");
-    failures.push(`- **${r.testCase?.description ?? "?"}** (${bucket}): ${reasons || r.error || "failed"}`);
+    // An error's first line only: the stack adds nothing to a summary.
+    const error = r.error ? String(r.error).split("\n")[0].replace(/^Not run: /, "") : "";
+    failures.push({ name: `**${r.testCase?.description ?? "?"}** (${bucket})`, why: reasons || error || "failed" });
   }
   buckets.set(bucket, b);
 }
@@ -31,9 +33,17 @@ const lines = [
   ...[...buckets.entries()].sort().map(([name, b]) => `| ${name} | ${b.pass}/${b.total} | ${pct(b.pass, b.total)} |`),
   `| **Total** | **${total.pass}/${total.total}** | **${pct(total.pass, total.total)}** |`,
   "",
-  failures.length ? `Failures:\n${failures.join("\n")}` : "No failures.",
+  failures.length ? `Failures:\n${failureLines().join("\n")}` : "No failures.",
   "",
 ];
 const md = lines.join("\n");
+
+// The same reason for many cases (an API quota, a missing key) is listed once.
+function failureLines() {
+  const byWhy = Map.groupBy(failures, (f) => f.why);
+  return [...byWhy].map(([why, fs]) =>
+    fs.length > 3 ? `- ${fs.length} cases: ${why}` : fs.map((f) => `- ${f.name}: ${why}`).join("\n"),
+  );
+}
 console.log(md);
 if (output) writeFileSync(output, md);
