@@ -12,6 +12,7 @@ export function registerAddApplication(server: McpServer) {
       title: "Add Job Application",
       description:
         "Save a new job application to the user's tracker. " +
+        "ONE application only: to add two or more, use propose_changes (one approval with a checkbox each). " +
         "Call this when the user says they applied to a job, or wants to track one they plan to apply to. " +
         "Only include details the user actually gave; never invent a URL, date, or notes. " +
         "If the company or role is unclear, ask the user before calling. " +

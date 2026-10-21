@@ -13,6 +13,7 @@ export function registerUpdateApplication(server: McpServer) {
         "Correct or add details on an existing application: role title, posting URL, source, notes " +
         "or applied date. Only pass the fields that change. To change the stage (applied, oa, ...) " +
         "use update_application_status instead. Needs the application id. " +
+        "ONE application only: to edit two or more, use propose_changes (one approval with a checkbox each). " +
         "If more than one application could match what the user said, ask which one; never pick one yourself. " +
         "When exactly one application matches, use it without asking. " +
         "The user must approve first: if the reply contains an approval link, show it to the user.",

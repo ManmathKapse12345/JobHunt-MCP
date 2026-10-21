@@ -15,8 +15,8 @@ export function registerUpdateApplicationStatus(server: McpServer) {
         "If more than one application could match what the user said (e.g. two roles at one company, " +
         "or the same title at several companies), ask which one; never pick one yourself. " +
         "When exactly one application matches, use it without asking. " +
-        "For several applications at once, list them and ask the user to confirm first. " +
-        "For changes found in the user's email (sync_job_emails), use propose_email_updates instead: one approval for all. " +
+        "ONE application only: to change two or more, use propose_changes (one approval with a checkbox each), " +
+        "or propose_email_updates for changes found in the user's email. " +
         "The change is recorded in the application's history. " +
         "The user must approve first: if the reply contains an approval link, show it to the user.",
       inputSchema: {

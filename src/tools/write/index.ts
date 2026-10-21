@@ -3,6 +3,7 @@ import { registerAddApplication } from "./add-application.js";
 import { registerUpdateApplicationStatus } from "./update-application-status.js";
 import { registerUpdateApplication } from "./update-application.js";
 import { registerDeleteApplication } from "./delete-application.js";
+import { registerProposeChanges } from "./propose-changes.js";
 
 // Every write tool goes through requireApproval: nothing is saved until the user says yes.
 export function registerWriteTools(server: McpServer) {
@@ -10,4 +11,5 @@ export function registerWriteTools(server: McpServer) {
   registerUpdateApplicationStatus(server);
   registerUpdateApplication(server);
   registerDeleteApplication(server);
+  registerProposeChanges(server);
 }
