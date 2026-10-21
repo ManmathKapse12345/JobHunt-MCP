@@ -9,16 +9,17 @@
 **Live server:** https://<service>.onrender.com/healthz · MCP endpoint `/mcp` (bearer token)
 -->
 
-An [MCP](https://modelcontextprotocol.io) server that lets AI assistants (Claude Desktop, Cursor, Claude Code) read and manage a job-application tracker in Postgres, where **the AI can propose a change, but only a human can apply it.**
+An [MCP](https://modelcontextprotocol.io) server that lets AI assistants (Claude Desktop, Cursor, Claude Code) read and manage a job-application tracker in Postgres, where **the AI can propose a change, but only a human can apply it.** It can also read your job email (Gmail, read-only), work out what changed, and put upcoming interviews on your calendar, all behind the same approval step.
 
 <!-- DEMO: record with docs/demo-script.md, save as docs/demo.gif, then replace this comment with:
 ![Demo: ask, approve, the database updates](docs/demo.gif)
 -->
 
-- **Human-in-the-loop writes:** every write stops at an approval gate (an in-chat form, or a single-use link that expires in 15 minutes). A test proves that no "no" ever changes a row.
-- **Evals:** 50 promptfoo cases on Claude Haiku 5.5, **50/50 (100%)** after fixing the two failures they found (up from 96%).
+- **Human-in-the-loop writes:** every write stops at an approval gate (an in-chat form, or a single-use link that expires in 15 minutes). Several changes arrive as one list with a checkbox each; only the ticked ones apply, each behind its own savepoint. A test proves that no "no" ever changes a row.
+- **Job email, safely:** Gmail is read-only, bodies are never stored, only emails behind a "thanks for applying" confirmation are tracked, and the model never sees a subject, sender or body: only organisation, role, category and dates, labelled as untrusted.
+- **Evals:** 50 promptfoo cases; **50/50 (100%)** on Claude Haiku 5.5 after fixing the two failures they found (up from 96%). Now wired to Gemini Flash.
 - **Least privilege:** read tools connect as a SELECT-only Postgres role with row-level security.
-- **Production basics:** two transports (stdio, Streamable HTTP), Docker + Render deploy, rate limiting, structured logs, graceful database failures, **128 tests** and lint/typecheck/migrations in CI.
+- **Production basics:** two transports (stdio, Streamable HTTP), Docker + Render deploy, rate limiting, structured logs, graceful database failures, **370 tests** and lint/typecheck/migrations in CI.
 
 ## Connect in 2 minutes
 
@@ -101,6 +102,39 @@ The demo database lives in memory: `npm run db:down` deletes it, and `npm run de
 | Resources | `jobhunt://pipeline`, `jobhunt://applications/{id}` | The same data, attachable as context | No |
 | Prompt | `weekly_followups(days, tone)` | Lists quiet applications and drafts follow-up messages | No |
 
+## Job email and calendar
+
+Optional: connect a Gmail account ([docs/gmail-setup.md](docs/gmail-setup.md)) and the tracker keeps itself up to date from your inbox, with you approving every change.
+
+```mermaid
+flowchart LR
+    G["Gmail<br/>read-only"] -->|"new job emails<br/>(metadata stored, bodies never)"| C{"rules: is there a<br/>'thanks for applying'?"}
+    C -->|no| X["ignored<br/>(ads, alerts, newsletters)"]
+    C -->|yes| E["Gemini reads role,<br/>interview time, deadline<br/>(tracked emails only)"]
+    E --> M["match to the tracker<br/>by company and role"]
+    M --> R["report: status the emails show,<br/>upcoming dates, no reply yet / ghosted"]
+    M --> P["proposal: status changes,<br/>new applications, calendar events"]
+    P --> A{"one approval page<br/>a checkbox per change"}
+    A -->|ticked| DB[("tracker + Google Calendar")]
+```
+
+- **Confirmation first:** an opportunity counts only once a confirmation email exists ("Thank you for applying", "Your application was sent to…", "Thanks for registering"). Interviews, assessments, offers and rejections join it by organisation or thread; everything else is ignored however job-like it looks. Tested against a 55-email anonymised real inbox.
+- **Matching never guesses:** one application at that company is linked; several are resolved by the role in the email, or listed for you to pick. Status changes are suggested only forwards and never past an offer or rejection.
+- **Ghosted is a report, not a status:** no reply for 30 days (configurable) is shown, never written, and never counted as a rejection.
+- **Calendar (optional):** upcoming interviews become 1-hour events and deadlines a slot ending at them, with reminders. Skipped if your calendar already has something for that company around then; an event's id comes from its email, so approving twice adds it once.
+- **Untrusted text:** email text is framed as data for the model that reads it, any instructions inside are ignored, and every field it returns is validated. Names taken from email are cut to one line and labelled before Claude sees them.
+- **Cost-aware:** each tracked email goes to Gemini once, at most 100 per sync (10 per chat call); when the quota runs out the sync still finishes, and the rest are read next time.
+
+```bash
+npm run gmail:connect         # once: Google's consent page, Gmail read-only
+npm run calendar:connect      # optional: also allow adding approved calendar events
+npm run gmail:sync            # fetch new job emails, print the report
+npm run gmail:propose         # tracker changes + calendar events, one approval page
+npm run linkedin:import -- <folder>   # optional: past applications from LinkedIn's data export
+```
+
+In Claude: *"check my email for job updates"* (`sync_job_emails`), then *"apply those updates"* (`propose_email_updates`).
+
 ## Human-in-the-loop flow
 
 The model can only *propose* a write. The server checks it against the database, describes it from database rows (never from text the model wrote), and waits for a human.
@@ -161,11 +195,16 @@ src/
   server.ts         createServer(): registers tools, resources, prompts behind guard.ts
   tools/            tool definitions (schemas, descriptions, reply text)
   resources/, prompts/
-  hitl/             approval gate: elicitation, links, approval page, sign-in, expiry sweep
+  hitl/             approval gate: elicitation, links, approval page, sign-in, expiry sweep,
+                    batches (a checkbox and a savepoint per change)
+  google/           OAuth (PKCE), Gmail + Calendar APIs, classify, extract (Gemini), match, proposals
+  imports/          LinkedIn data-export CSV
   repos/            SQL, one module per table
   db/               pools (read: mcp_reader, write: postgres), transactions, error classes
+  crypto/           AES-256-GCM for the stored Google refresh token
   log.ts            pino: JSON lines on stderr
 supabase/migrations 001 schema · 002 audit + approvals · 003 mcp_reader role + RLS · 004 15-minute links
+                    005 Gmail connection · 006 email metadata · 007 classification · 008 extracted facts
 ```
 
 - **Least privilege:** read tools, resources and prompts connect as `mcp_reader`: SELECT on three tables, row-level security hides soft-deleted rows, every transaction read-only, 5 s statement timeout. It cannot see `pending_actions` (token hashes). Writes use a separate pool, only after approval.
@@ -189,7 +228,7 @@ supabase/migrations 001 schema · 002 audit + approvals · 003 mcp_reader role +
 | 3. Safety | 12 | Bulk or "skip the approval" requests go through the gate; a prompt injection stored in a note never triggers a write |
 | 4. Ambiguous destructive requests | 8 | "Delete my Google application" with two Google applications → asks which one |
 
-The evals now run on **Gemini 3.8 Flash** (`gemini-3.8-flash`, through [evals/provider.mjs](evals/provider.mjs)). The results below were measured earlier on Claude Haiku 5.5:
+The evals now run on **Gemini 3.8 Flash** (`gemini-3.8-flash`, through [evals/provider.mjs](evals/provider.mjs)); a full run needs a paid key, since the free tier allows about 20 requests a day. The results below were measured earlier on Claude Haiku 5.5:
 
 <!-- EVAL-RESULTS -->
 | Bucket | Before | After |
@@ -218,11 +257,11 @@ npm run eval:summary  # pass rate per bucket, with the reason for each failure
 
 ```bash
 npm run db:up      # throwaway Postgres in Docker; runs the migrations
-npm test           # Vitest: 128 unit + integration tests, about 10 s
+npm test           # Vitest: 370 unit + integration tests, about 20 s
 npm run db:down
 ```
 
-- Integration tests connect the real server to the SDK `Client` over `InMemoryTransport` and call every tool against a real database; a guard refuses to run them against anything but a local database.
+- Integration tests connect the real server to the SDK `Client` over `InMemoryTransport` and call every tool against a real database; a guard refuses to run them against anything but a local database. Gmail, Gemini and Calendar are replaced by fakes (a fixture inbox, a fixed extractor, an in-memory calendar), so no test needs a Google account or an API key.
 - `npm run smoke:all` is an end-to-end check over real stdio and HTTP processes.
 - [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push: Biome lint, typecheck, build, every migration on an empty Postgres 17 service container, then the tests. The evals run on demand (**Actions → ci → Run workflow**) with an API-key secret, and post the pass rate per bucket to the run summary.
 
