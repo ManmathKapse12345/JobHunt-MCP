@@ -59,6 +59,18 @@ export async function listApplications(filters: {
   return rows;
 }
 
+// Every live application, for matching email against the whole tracker.
+export async function listAllApplications(db: Db = readPool): Promise<ApplicationRow[]> {
+  const { rows } = await db.query<ApplicationRow>(
+    `select ${COLUMNS}
+       from applications a
+       join companies c on c.id = a.company_id
+      where a.deleted_at is null
+      order by c.name, a.role`,
+  );
+  return rows;
+}
+
 export async function getApplicationById(
   id: string,
   db: Db = readPool,

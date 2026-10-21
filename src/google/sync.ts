@@ -8,7 +8,7 @@ import {
   saveExtraction,
 } from "../repos/email-messages.js";
 import { selectTracked, type TrackingResult } from "./classify.js";
-import type { Extractor } from "./extract.js";
+import { type Extraction, ExtractError, type Extractor } from "./extract.js";
 import { DEFAULT_MAX, type GmailMessage, type GmailSource } from "./gmail-source.js";
 import { buildJobQuery, type JobQueryOptions } from "./job-query.js";
 
@@ -25,7 +25,8 @@ export interface SyncResult {
   // Over everything stored for the account, not just this sync.
   tracking: TrackingResult;
   extracted: number; // tracked emails the extractor read this time
-  extractPending: number; // left for the next sync (over maxExtract)
+  extractPending: number; // left for the next sync (over maxExtract, or extraction stopped)
+  extractStopped?: string; // why extraction stopped early, if it did
 }
 
 export interface SyncOptions extends JobQueryOptions {
@@ -70,16 +71,26 @@ export async function syncJobEmails(
   // never an email the gate ignored. Older ones are fetched again (their text was never kept).
   let extracted = 0;
   let extractPending = 0;
+  let extractStopped: string | undefined;
   if (opts.extractor) {
     const freshById = new Map(fresh.map((m) => [m.id, m]));
     const pending = tracking.opportunities.flatMap((o) => o.emails).filter((e) => !e.extracted);
-    extractPending = Math.max(0, pending.length - (opts.maxExtract ?? DEFAULT_MAX_EXTRACT));
     for (const e of pending.slice(0, opts.maxExtract ?? DEFAULT_MAX_EXTRACT)) {
       const text = freshById.get(e.id)?.text ?? (await source.get(e.id)).text;
-      const x = await opts.extractor.extract({ ...e, text });
+      let x: Extraction;
+      try {
+        x = await opts.extractor.extract({ ...e, text });
+      } catch (err) {
+        // Quota used up, bad key, API down: the rest of the sync still stands, and the
+        // emails not read yet are read next time.
+        if (!(err instanceof ExtractError)) throw err;
+        extractStopped = err.message;
+        break;
+      }
       await saveExtraction(connectionId, e.id, x, opts.extractor.model);
       extracted++;
     }
+    extractPending = pending.length - extracted;
     if (extracted > 0) tracking = selectTracked(await listClassifiedEmails(connectionId));
   }
   await markSynced(connectionId);
@@ -94,8 +105,9 @@ export async function syncJobEmails(
       unconfirmed: tracking.unconfirmed.length,
       extracted,
       extractPending,
+      extractStopped,
     },
     "gmail sync done",
   );
-  return { query, matched: ids.length, alreadyStored: known.size, fresh, tracking, extracted, extractPending };
+  return { query, matched: ids.length, alreadyStored: known.size, fresh, tracking, extracted, extractPending, extractStopped };
 }

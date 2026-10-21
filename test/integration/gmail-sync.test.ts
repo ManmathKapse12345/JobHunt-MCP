@@ -4,9 +4,11 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { readPool, writePool } from "../../src/db/pool.js";
 import { deleteGmailConnection, upsertGmailConnection } from "../../src/repos/gmail-connections.js";
 import { insertEmailMessage } from "../../src/repos/email-messages.js";
-import type { Extractor } from "../../src/google/extract.js";
+import { ExtractError, type Extractor } from "../../src/google/extract.js";
 import { syncJobEmails } from "../../src/google/sync.js";
-import { count, resetDb } from "../helpers/db.js";
+import { matchOpportunities } from "../../src/google/match.js";
+import { listAllApplications } from "../../src/repos/applications.js";
+import { count, resetDb, seedApplication } from "../helpers/db.js";
 import { email, fakeGmailSource, fixtureEmails } from "../helpers/fake-gmail-source.js";
 
 let connectionId: string;
@@ -179,6 +181,23 @@ describe("syncJobEmails", () => {
       expect(next).toMatchObject({ extracted: 1, extractPending: 0 });
     });
 
+    it("a failing extractor (quota used up) stops reading but not the sync", async () => {
+      const { extractor } = fakeExtractor();
+      let calls = 0;
+      const flaky: Extractor = {
+        model: extractor.model,
+        async extract(e) {
+          if (++calls > 1) throw new ExtractError("Gemini quota for m is used up");
+          return extractor.extract(e);
+        },
+      };
+      const r = await syncJobEmails(fakeGmailSource(), connectionId, { extractor: flaky });
+      expect(r).toMatchObject({ extracted: 1, extractPending: 1, extractStopped: "Gemini quota for m is used up" });
+      expect(r.tracking.opportunities).toHaveLength(2);
+      const { rows } = await writePool.query("select last_synced_at from gmail_connections where id = $1", [connectionId]);
+      expect(rows[0].last_synced_at).toBeInstanceOf(Date);
+    });
+
     it("stores the facts, still never the text", async () => {
       const { extractor } = fakeExtractor();
       await syncJobEmails(fakeGmailSource(), connectionId, { extractor });
@@ -197,6 +216,26 @@ describe("syncJobEmails", () => {
     await syncJobEmails(fakeGmailSource([]), connectionId);
     const { rows } = await writePool.query("select last_synced_at from gmail_connections where id = $1", [connectionId]);
     expect(rows[0].last_synced_at).toBeInstanceOf(Date);
+  });
+});
+
+describe("matching synced opportunities to the tracker", () => {
+  it("links to live applications only, and reports who hasn't replied", async () => {
+    const acme = await seedApplication({ company: "Acme Robotics Pvt. Ltd.", role: "Software Engineer Intern" });
+    await seedApplication({ company: "Globex", role: "Backend Developer", deleted: true });
+    const { tracking } = await syncJobEmails(fakeGmailSource(), connectionId);
+
+    const matches = matchOpportunities(tracking.opportunities, await listAllApplications(), {
+      now: new Date("2026-11-01T00:00:00Z"),
+      ghostAfterDays: 20,
+    });
+    const byOrg = Object.fromEntries(matches.map((m) => [m.opportunity.organization, m]));
+    expect(byOrg["Acme Robotics"]).toMatchObject({ match: "linked", application: { id: acme }, suggestedStatus: null });
+    // The only Globex application was deleted.
+    expect(byOrg.Globex).toMatchObject({ match: "untracked", suggestedStatus: "applied" });
+    // Confirmations on Oct 10 and Oct 12, nothing since: 21 and 19 days quiet on Nov 1.
+    expect(byOrg["Acme Robotics"]!.reply).toMatchObject({ state: "ghosted", daysQuiet: 21 });
+    expect(byOrg.Globex!.reply).toMatchObject({ state: "waiting", daysQuiet: 19 });
   });
 });
 

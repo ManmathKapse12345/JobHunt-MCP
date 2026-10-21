@@ -143,7 +143,9 @@ export function orgKey(name: string): string {
   return k;
 }
 
-function sameOrg(a: string, b: string): boolean {
+// Two orgKeys name the same organisation: equal, or one is the other plus more words
+// ("acme" and "acme robotics").
+export function sameOrg(a: string, b: string): boolean {
   if (a === b) return true;
   const [short, long] = a.length <= b.length ? [a, b] : [b, a];
   return short.length >= 4 && long.startsWith(`${short} `);

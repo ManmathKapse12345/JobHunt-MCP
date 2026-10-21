@@ -2,11 +2,13 @@
 //   npm run gmail:connect      opens Google's consent page; read-only access
 //   npm run gmail:status
 //   npm run gmail:disconnect   revokes the access at Google and deletes the saved token
-//   npm run gmail:sync [-- --days 90 --max 1000 --label jobs --no-extract]
-//                              fetch new job emails, print the confirmed opportunities;
+//   npm run gmail:sync [-- --days 90 --max 1000 --label jobs --no-extract --ghost-days 30]
+//                              fetch new job emails, print the confirmed opportunities next
+//                              to the tracker, and which ones haven't had a reply;
 //                              with GEMINI_API_KEY, Gemini reads their role and dates
 // Uses the database in .env (your real tracker). Add --demo for the local Docker database.
 import { spawn } from "node:child_process";
+import type { OpportunityMatch } from "../src/google/match.js";
 
 if (process.argv.includes("--demo")) {
   const { TEST_ENV } = await import("../test/env.js");
@@ -21,6 +23,8 @@ const { getGmailConnection } = await import("../src/repos/gmail-connections.js")
 const { createGmailApiSource, DEFAULT_MAX } = await import("../src/google/gmail-source.js");
 const { syncJobEmails } = await import("../src/google/sync.js");
 const { createGeminiExtractor, ExtractError } = await import("../src/google/extract.js");
+const { DEFAULT_GHOST_AFTER_DAYS, matchOpportunities } = await import("../src/google/match.js");
+const { listAllApplications } = await import("../src/repos/applications.js");
 
 const command = process.argv[2];
 
@@ -72,18 +76,34 @@ try {
     if (r.matched === (Number(max) || DEFAULT_MAX)) {
       console.log(`(Stopped at ${r.matched}; older matches weren't read. Raise it with -- --max 1000.)`);
     }
+    const ghostDays = Number(flag("--ghost-days") ?? DEFAULT_GHOST_AFTER_DAYS);
+    const matches = matchOpportunities(opportunities, await listAllApplications(), { ghostAfterDays: ghostDays });
     // Sender, date and subject only; bodies are never printed (or stored).
     console.log(`\nTracked: ${opportunities.length} confirmed opportunities\n`);
-    for (const o of opportunities) {
+    for (const { opportunity: o, ...m } of matches) {
       const what = [o.role, o.kind].filter(Boolean).join(", ");
       console.log(`  ${day(o.confirmedAt)}  ${o.organization}${what ? ` (${what})` : ""}`);
+      console.log(`      tracker: ${trackerLine(m)}`);
       for (const e of o.emails) console.log(`      ${day(e.receivedAt)}  ${e.category.padEnd(10)} ${e.subject}`);
       for (const d of o.dates) {
         console.log(`      ${d.what === "event" ? `${d.category} on` : "due by"} ${d.at.toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}`);
       }
     }
+    const quiet = matches
+      .flatMap((m) => (m.reply && m.reply.state !== "replied" ? [{ ...m, reply: m.reply }] : []))
+      .sort((a, b) => b.reply.daysQuiet - a.reply.daysQuiet);
+    const ghosted = quiet.filter((m) => m.reply.state === "ghosted").length;
+    console.log(`\nNo reply yet: ${quiet.length - ghosted} waiting, ${ghosted} ghosted (nothing for ${ghostDays}+ days)\n`);
+    for (const m of quiet) {
+      const role = m.application?.role ?? m.opportunity.role;
+      console.log(
+        `  ${String(m.reply.daysQuiet).padStart(3)} days  ${m.opportunity.organization}${role ? ` (${role})` : ""}` +
+          `${m.reply.state === "ghosted" ? "  ghosted" : ""}`,
+      );
+    }
     if (extractor) {
       console.log(`\nRead ${r.extracted} tracked emails with ${extractor.model}${r.extractPending ? `; ${r.extractPending} left for the next sync` : ""}.`);
+      if (r.extractStopped) console.log(`Stopped reading early: ${r.extractStopped}`);
     } else {
       console.log("\n(Rules only. Set GEMINI_API_KEY in .env to also read roles and interview dates.)");
     }
@@ -120,6 +140,16 @@ try {
   process.exitCode = 1;
 } finally {
   await closePools();
+}
+
+// Where an opportunity stands in the tracker. Nothing here changes the tracker.
+function trackerLine(m: Omit<OpportunityMatch, "opportunity">): string {
+  if (m.match === "untracked") return `not tracked yet (emails say ${m.suggestedStatus})`;
+  if (m.match === "ambiguous") {
+    return `${m.candidates.length} applications could be this: ${m.candidates.map((a) => `${a.role} at ${a.company}`).join(", ")}`;
+  }
+  const a = m.application!;
+  return `${a.role} at ${a.company}, ${a.status}${m.suggestedStatus ? `; emails say ${m.suggestedStatus} (not changed)` : ""}`;
 }
 
 function day(d: Date): string {
