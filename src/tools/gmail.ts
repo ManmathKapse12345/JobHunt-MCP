@@ -53,8 +53,9 @@ export function registerGmailTools(server: McpServer, deps: GmailDeps = defaultG
         "interviews, offers, rejections) and report them next to the tracker: which application each " +
         "confirmed opportunity is, where the emails are further along than the tracker, upcoming " +
         "interview/assessment dates, and which applications have had no reply (ghosted after N days). " +
-        "Use it when the user asks to check their email for job updates. It never changes the tracker; " +
-        "if it reports changes, offer propose_email_updates.",
+        "Use it when the user asks to check their email for job updates. It never changes the tracker. " +
+        "To apply what it reports, call propose_email_updates ONCE: it puts every change in one approval with a " +
+        "checkbox each. Never call update_application_status or add_application once per reported change.",
       inputSchema: {
         days: z.number().int().min(1).max(365).optional().describe("How far back to search (default 30 days)"),
         ghostAfterDays: z
@@ -175,7 +176,10 @@ function report(matches: OpportunityMatch[], ghostAfterDays: number): string {
       ({ m, reply }) => `- ${oneLine(m.opportunity.organization)}: ${reply.daysQuiet} days since the last email${reply.state === "ghosted" ? ", ghosted" : ""}`,
     ),
     "",
-    changes ? `${changes} tracker change(s) can be proposed: offer propose_email_updates.` : "The tracker matches the emails.",
+    changes
+      ? `${changes} tracker change(s) can be proposed. To apply them, call propose_email_updates once (one approval, ` +
+        "a checkbox per change); don't update the applications one by one."
+      : "The tracker matches the emails.",
   ].join("\n");
 }
 

@@ -57,7 +57,7 @@ describe("sync_job_emails", () => {
     expect(t).toContain("upcoming: interview on 2099-01-05T09:30:00.000Z");
     expect(t).toMatch(/- Globex .*\n {2}tracker: not tracked yet \(emails say applied\)/);
     expect(t).toMatch(/No reply yet: \d+ waiting, \d+ ghosted/);
-    expect(t).toContain("offer propose_email_updates");
+    expect(t).toContain("call propose_email_updates once");
   });
 
   it("never shows the model a subject, a sender or a body; email-derived names are labelled and cut short", async () => {
