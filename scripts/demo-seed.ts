@@ -27,5 +27,8 @@ const DEMO = [
 
 await resetDb();
 for (const app of DEMO) await seedApplication(app);
-console.log(`loaded ${DEMO.length} demo applications into ${new URL(TEST_ENV.DATABASE_URL).host}`);
+// A pretend Gmail account for the demo inbox (JOBHUNT_DEMO_INBOX=1): no real token behind it.
+const { upsertGmailConnection } = await import("../src/repos/gmail-connections.js");
+await upsertGmailConnection({ email: "demo@example.com", refreshTokenEnc: "demo", scopes: "demo" });
+console.log(`loaded ${DEMO.length} demo applications and a demo inbox account into ${new URL(TEST_ENV.DATABASE_URL).host}`);
 await closePools();

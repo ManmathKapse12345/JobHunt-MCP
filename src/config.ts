@@ -40,6 +40,10 @@ const EnvSchema = z.object({
 
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "fatal", "silent"]).default("info"),
 
+  // 1 = the Gmail tools read a made-up inbox (src/google/demo-inbox.ts) and approved
+  // calendar events stay in memory: for the demo database only (docs/demo-script.md).
+  JOBHUNT_DEMO_INBOX: z.stringbool().default(false),
+
   // ----- Gmail (optional; docs/gmail-setup.md). Without them, Gmail features say how to set up -----
   // A "Desktop app" OAuth client from Google Cloud. For desktop apps Google does not treat
   // the secret as confidential (PKCE protects the flow), but it still belongs in .env, not git.
