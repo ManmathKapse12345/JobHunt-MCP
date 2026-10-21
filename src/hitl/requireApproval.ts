@@ -2,12 +2,13 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { RequestId } from "@modelcontextprotocol/sdk/types.js";
 import { log } from "../log.js";
 import { insertPendingAction } from "../repos/pending-actions.js";
-import type { Prepared } from "./actions.js";
+import { batchItems, type Prepared } from "./actions.js";
 import { approvalUrl } from "./links.js";
 import { hashToken, newToken } from "./token.js";
 
 export type Approval =
-  | { kind: "approved"; actor: string }
+  // selected: for apply_batch, the indexes of the items the user ticked.
+  | { kind: "approved"; actor: string; selected?: number[] }
   | { kind: "declined"; reason: string }
   | { kind: "pending"; url: string; expiresAt: Date };
 
@@ -32,6 +33,7 @@ export async function requireApproval(
 
   if (lowLevel.getClientCapabilities()?.elicitation?.form) {
     try {
+      if (prepared.toolName === "apply_batch") return await askBatch(server, prepared, relatedRequestId);
       const result = await lowLevel.elicitInput(
         {
           message: `jobhunt-mcp wants to make this change:\n\n${prepared.summary}`,
@@ -65,6 +67,28 @@ export async function requireApproval(
   }
 
   return { kind: "pending", ...(await createApprovalLink(prepared)) };
+}
+
+// A batch: one checkbox per change, all ticked to start with, like the approval page.
+async function askBatch(server: McpServer, prepared: Prepared, relatedRequestId?: RequestId): Promise<Approval> {
+  const items = batchItems(prepared.payload);
+  const result = await server.server.elicitInput(
+    {
+      message: `jobhunt-mcp wants to make ${items.length} changes. Untick any you don't want.`,
+      requestedSchema: {
+        type: "object",
+        properties: Object.fromEntries(
+          items.map((it, i) => [`item_${i}`, { type: "boolean" as const, title: `${i + 1}. ${it.summary}`, default: true }]),
+        ),
+      },
+    },
+    { timeout: ELICITATION_TIMEOUT_MS, relatedRequestId },
+  );
+  if (result.action !== "accept") return { kind: "declined", reason: result.action };
+  const selected = items.flatMap((_, i) => (result.content?.[`item_${i}`] === true ? [i] : []));
+  if (selected.length === 0) return { kind: "declined", reason: "nothing ticked" };
+  const client = server.server.getClientVersion()?.name ?? "unknown client";
+  return { kind: "approved", actor: `user via elicitation (${client})`, selected };
 }
 
 // Store the change in pending_actions and return its one-time link. Also used without an

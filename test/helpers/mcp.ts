@@ -2,14 +2,15 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ElicitRequestSchema, type ElicitResult } from "@modelcontextprotocol/sdk/types.js";
 import { createServer } from "../../src/server.js";
+import type { GmailDeps } from "../../src/tools/gmail.js";
 
 export type ToolResult = { content: Array<{ type: string; text?: string }>; isError?: boolean };
 
 // The real server and a real SDK client, joined by an in-memory pipe: the same JSON-RPC
 // messages as stdio or HTTP (schema validation, elicitation...) without a process or socket.
-export async function connectClient(opts: { elicitation: boolean; name?: string }) {
+export async function connectClient(opts: { elicitation: boolean; name?: string; gmail?: GmailDeps }) {
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
-  const server = createServer();
+  const server = createServer({ gmail: opts.gmail });
   const client = new Client(
     { name: opts.name ?? "vitest", version: "0.0.1" },
     { capabilities: opts.elicitation ? { elicitation: { form: {} } } : {} },

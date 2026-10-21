@@ -1,4 +1,4 @@
-// Turn what the emails show (match.ts) into tracker changes for the human to approve:
+ // Turn what the emails show (match.ts) into tracker changes for the human to approve:
 //   linked, emails further along  -> update_application_status, with the email noted
 //   not tracked yet                -> add_application, applied on the confirmation's date
 // Ambiguous matches and competitions are never proposed; they come back as skipped, with

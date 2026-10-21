@@ -33,7 +33,7 @@ beforeEach(async () => {
 });
 
 describe("tool list", () => {
-  it("has all 10 tools, with the read ones marked read-only", async () => {
+  it("has all 12 tools, with the read ones marked read-only", async () => {
     const { tools } = await mcp.client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       "add_application",
@@ -44,6 +44,8 @@ describe("tool list", () => {
       "get_pipeline_summary",
       "list_applications",
       "ping",
+      "propose_email_updates",
+      "sync_job_emails",
       "update_application",
       "update_application_status",
     ]);
