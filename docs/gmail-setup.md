@@ -74,6 +74,21 @@ Each tracked opportunity is also shown next to your tracker, without changing an
 
 Then **No reply yet** lists the applications with no assessment, interview, offer or rejection, by days since the last email. After 30 days they're marked *ghosted* (`--ghost-days 21` to change it). Ghosted is only a report: it never changes a status and never counts as a rejection. Hackathons and competitions aren't listed.
 
+### Apply what the emails show
+
+```bash
+npm run gmail:propose
+```
+
+This turns the report into tracker changes, using the emails the last sync stored (no Gmail or model calls):
+
+- a status change where the emails are further along (with a note such as *From Gmail: interview email on 2026-10-18* in the history);
+- a new application for each confirmed one you don't track yet, dated by its confirmation email, with the job site as its source. If no email named the role it is added as "Role not stated"; fix it later with `update_application`.
+
+Ambiguous ones and competitions are listed as not proposed, with the reason. Nothing changes yet: an approval page opens with one ticked checkbox per change. Untick what you don't want and click **Apply ticked changes** (or **Reject all**). The command waits and prints what happened. The link expires after 15 minutes.
+
+Each change is applied separately inside one transaction: if one no longer fits (you changed that application meanwhile, or it's now a duplicate), only that one is skipped and reported, and the rest are applied.
+
 ## Good to know
 
 - **Weekly reconnect:** while the app is in Testing mode, Google expires the saved access after **7 days**. The server then says *"connect Gmail again"*; run `npm run gmail:connect` and you're back.

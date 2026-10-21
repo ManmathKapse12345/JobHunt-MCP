@@ -15,9 +15,13 @@ export const isoDate = z
 // Don't use toISOString() here: it returns the UTC date, which in India
 // is still yesterday between 00:00 and 05:30 local time.
 export function todayIso(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
+  return localIsoDate(new Date());
+}
+
+// The local calendar date of an instant, as YYYY-MM-DD.
+export function localIsoDate(d: Date): string {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }

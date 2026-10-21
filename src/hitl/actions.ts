@@ -273,6 +273,83 @@ const applyDelete = defineAction(DeletePayload, async (client, p, actor) => {
   return `Deleted ${describe(app)}.`;
 });
 
+// ---------- apply_batch: several changes, approved together ----------
+// The human ticks which items to apply. Each runs behind its own savepoint, so one that
+// no longer applies (changed meanwhile, now a duplicate) is undone alone and the rest stay.
+
+const BATCHABLE = ["add_application", "update_application_status", "update_application"] as const;
+export const MAX_BATCH_ITEMS = 100;
+
+const BatchPayload = z.object({
+  items: z
+    .array(z.object({ toolName: z.enum(BATCHABLE), payload: z.unknown(), summary: z.string() }))
+    .min(1)
+    .max(MAX_BATCH_ITEMS),
+});
+export type BatchItem = z.infer<typeof BatchPayload>["items"][number];
+
+export function prepareBatch(title: string, items: Prepared[]): Prepared {
+  if (items.length === 0) throw new ActionError("Nothing to change.");
+  if (items.length > MAX_BATCH_ITEMS) throw new ActionError(`At most ${MAX_BATCH_ITEMS} changes in one batch.`);
+  const batchItems = items.map((p) => {
+    const toolName = z.enum(BATCHABLE).parse(p.toolName);
+    return { toolName, payload: p.payload, summary: p.summary };
+  });
+  return {
+    toolName: "apply_batch",
+    payload: { items: batchItems },
+    summary: `${title}\n${batchItems.map((it, i) => `${i + 1}. ${it.summary}`).join("\n")}`,
+  };
+}
+
+export function batchItems(rawPayload: unknown): BatchItem[] {
+  const parsed = BatchPayload.safeParse(rawPayload);
+  if (!parsed.success) throw new ActionError(`Stored change is invalid: ${z.prettifyError(parsed.error)}`);
+  return parsed.data.items;
+}
+
+export interface BatchOutcome {
+  summary: string;
+  outcome: "applied" | "failed" | "skipped";
+  message: string;
+}
+
+// selected: indexes of the items to apply; undefined = all of them.
+export async function executeBatch(
+  client: pg.PoolClient,
+  rawPayload: unknown,
+  actor: string,
+  selected?: number[],
+): Promise<{ message: string; items: BatchOutcome[] }> {
+  const items = batchItems(rawPayload);
+  const outcomes: BatchOutcome[] = [];
+  for (const [i, item] of items.entries()) {
+    if (selected && !selected.includes(i)) {
+      outcomes.push({ summary: item.summary, outcome: "skipped", message: "Not ticked." });
+      continue;
+    }
+    await client.query("savepoint batch_item");
+    try {
+      const message = await executeAction(client, item.toolName, item.payload, actor);
+      await client.query("release savepoint batch_item");
+      outcomes.push({ summary: item.summary, outcome: "applied", message });
+    } catch (err) {
+      // Also clears a failed statement (say a unique violation), which would otherwise
+      // abort the whole transaction.
+      await client.query("rollback to savepoint batch_item");
+      if (!(err instanceof ActionError)) throw err;
+      outcomes.push({ summary: item.summary, outcome: "failed", message: err.message });
+    }
+  }
+  const n = (o: BatchOutcome["outcome"]) => outcomes.filter((x) => x.outcome === o).length;
+  const message =
+    `Applied ${n("applied")} of ${items.length} changes` +
+    (n("failed") ? `; ${n("failed")} no longer applied and were left as they were` : "") +
+    (n("skipped") ? `; ${n("skipped")} not ticked` : "") +
+    ".";
+  return { message, items: outcomes };
+}
+
 // ---------- registry ----------
 
 const APPLY: Record<string, Apply> = {
@@ -280,6 +357,8 @@ const APPLY: Record<string, Apply> = {
   update_application_status: applyStatusChange,
   update_application: applyUpdate,
   delete_application: applyDelete,
+  // Approved as a whole (an elicitation yes/no): every item.
+  apply_batch: async (client, payload, actor) => (await executeBatch(client, payload, actor)).message,
 };
 
 // Runs an approved change inside the caller's transaction. Used both right after an

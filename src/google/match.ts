@@ -9,7 +9,7 @@
 // is not a rejection (counting it as one would inflate the response rate).
 
 import type { ApplicationRow, ApplicationStatus } from "../repos/applications.js";
-import { type EmailCategory, type Opportunity, orgKey, sameOrg } from "./classify.js";
+import { type ClassifiedEmail, type EmailCategory, type Opportunity, orgKey, sameOrg } from "./classify.js";
 
 export interface OpportunityMatch {
   opportunity: Opportunity;
@@ -18,8 +18,10 @@ export interface OpportunityMatch {
   match: "linked" | "ambiguous" | "untracked";
   application: ApplicationRow | null;
   candidates: ApplicationRow[];
-  // The status the newest decisive email implies (applied, oa, interview, offer, rejected).
+  // The status the newest decisive email implies (applied, oa, interview, offer, rejected),
+  // and that email.
   emailStatus: ApplicationStatus;
+  evidence: ClassifiedEmail;
   // linked: the tracker is behind the emails. untracked: the status to add it with.
   suggestedStatus: ApplicationStatus | null;
   reply: Reply;
@@ -68,7 +70,7 @@ export function matchOpportunities(
     const application = (opportunity.role ? (byRole.length === 1 ? byRole[0] : null) : atOrg.length === 1 ? atOrg[0] : null) ?? null;
     const match = application ? "linked" : atOrg.length > 0 ? "ambiguous" : "untracked";
 
-    const emailStatus = statusFromEmails(opportunity);
+    const { status: emailStatus, evidence } = statusFromEmails(opportunity);
     const suggestedStatus =
       match === "untracked" ? emailStatus : application && isAhead(emailStatus, application.status) ? emailStatus : null;
 
@@ -78,6 +80,7 @@ export function matchOpportunities(
       application,
       candidates: match === "ambiguous" ? atOrg : [],
       emailStatus,
+      evidence,
       suggestedStatus,
       reply: replyOf(opportunity, application, now, ghostAfterDays),
     };
@@ -85,12 +88,12 @@ export function matchOpportunities(
 }
 
 // The newest email that says where things stand; an opportunity always has its confirmation.
-function statusFromEmails(o: Opportunity): ApplicationStatus {
+function statusFromEmails(o: Opportunity): { status: ApplicationStatus; evidence: ClassifiedEmail } {
   for (let i = o.emails.length - 1; i >= 0; i--) {
     const s = STATUS_OF[o.emails[i]!.category];
-    if (s) return s;
+    if (s) return { status: s, evidence: o.emails[i]! };
   }
-  return "applied";
+  return { status: "applied", evidence: o.emails[0]! };
 }
 
 // Only forward, and never past a decision already in the tracker.

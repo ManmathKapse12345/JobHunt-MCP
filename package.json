@@ -25,6 +25,7 @@
     "gmail:status": "tsx scripts/gmail.ts status",
     "gmail:disconnect": "tsx scripts/gmail.ts disconnect",
     "gmail:sync": "tsx scripts/gmail.ts sync",
+    "gmail:propose": "tsx scripts/gmail.ts propose",
     "eval": "npm run build && tsx evals/seed.ts && promptfoo eval -c evals/promptfooconfig.yaml -o evals/results/latest.json --no-cache",
     "eval:summary": "node evals/summarize.mjs evals/results/latest.json",
     "eval:view": "promptfoo view",

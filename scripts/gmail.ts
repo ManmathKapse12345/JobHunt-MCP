@@ -6,6 +6,8 @@
 //                              fetch new job emails, print the confirmed opportunities next
 //                              to the tracker, and which ones haven't had a reply;
 //                              with GEMINI_API_KEY, Gemini reads their role and dates
+//   npm run gmail:propose      turn what the stored emails show into tracker changes, in one
+//                              approval page (tick what to apply); no Gmail or model calls
 // Uses the database in .env (your real tracker). Add --demo for the local Docker database.
 import { spawn } from "node:child_process";
 import type { OpportunityMatch } from "../src/google/match.js";
@@ -25,6 +27,12 @@ const { syncJobEmails } = await import("../src/google/sync.js");
 const { createGeminiExtractor, ExtractError } = await import("../src/google/extract.js");
 const { DEFAULT_GHOST_AFTER_DAYS, matchOpportunities } = await import("../src/google/match.js");
 const { listAllApplications } = await import("../src/repos/applications.js");
+const { proposeFromMatches } = await import("../src/google/proposals.js");
+const { selectTracked } = await import("../src/google/classify.js");
+const { listClassifiedEmails } = await import("../src/repos/email-messages.js");
+const { createApprovalLink } = await import("../src/hitl/requireApproval.js");
+const { startApprovalServer } = await import("../src/hitl/approval-server.js");
+const { getPendingAction } = await import("../src/repos/pending-actions.js");
 
 const command = process.argv[2];
 
@@ -109,8 +117,39 @@ try {
     }
     console.log(`\nIgnored: ${notJob} not about an application, ${unconfirmed.length} with no confirmation email:\n`);
     for (const e of unconfirmed) console.log(`  ${day(e.receivedAt)}  ${e.category.padEnd(10)} ${e.subject}  [${e.from}]`);
+  } else if (command === "propose") {
+    const row = await getGmailConnection();
+    if (!row) throw new GmailNotConnected("No Gmail account is connected. Run: npm run gmail:connect");
+    // From what the last sync stored: no Gmail or model calls here.
+    const { opportunities } = selectTracked(await listClassifiedEmails(row.id));
+    const { batch, skipped } = await proposeFromMatches(matchOpportunities(opportunities, await listAllApplications()));
+    if (skipped.length) {
+      console.log(`Not proposed (${skipped.length}):`);
+      for (const s of skipped) console.log(`  ${s.organization}: ${s.reason}`);
+      console.log();
+    }
+    if (!batch) {
+      console.log("Nothing to change: your tracker already matches your job emails. (Run gmail:sync first for new ones.)");
+    } else {
+      await startApprovalServer();
+      const link = await createApprovalLink(batch);
+      console.log(`${batch.summary}\n\nNothing has changed yet. Tick what to apply on this page:\n\n  ${link.url}\n`);
+      openBrowser(link.url);
+      console.log(`Waiting for your decision (the link expires at ${link.expiresAt.toLocaleTimeString()})...`);
+      const decided = await waitForDecision(link.id, link.expiresAt);
+      if (!decided || decided.status === "expired") console.log("\nThe link expired. Nothing was changed; run gmail:propose again.");
+      else if (decided.status === "rejected") console.log("\nRejected. Nothing was changed.");
+      else if (decided.error) console.log(`\nNot applied: ${decided.error}`);
+      else {
+        const result = decided.result as { message: string; items: Array<{ summary: string; outcome: string; message: string }> };
+        console.log(`\n${result.message}`);
+        for (const it of result.items) {
+          console.log(`  ${it.outcome.padEnd(8)} ${it.summary}${it.outcome === "failed" ? `\n           ${it.message}` : ""}`);
+        }
+      }
+    }
   } else {
-    console.log("Usage: npm run gmail:connect | gmail:status | gmail:disconnect | gmail:sync");
+    console.log("Usage: npm run gmail:connect | gmail:status | gmail:disconnect | gmail:sync | gmail:propose");
     process.exitCode = 1;
   }
 } catch (err) {
@@ -150,6 +189,17 @@ function trackerLine(m: Omit<OpportunityMatch, "opportunity">): string {
   }
   const a = m.application!;
   return `${a.role} at ${a.company}, ${a.status}${m.suggestedStatus ? `; emails say ${m.suggestedStatus} (not changed)` : ""}`;
+}
+
+// The decision is made on the approval page (this process's, or another jobhunt-mcp's
+// on the same port: either way it lands in pending_actions).
+async function waitForDecision(id: string, expiresAt: Date) {
+  while (Date.now() < expiresAt.getTime() + 5_000) {
+    const row = await getPendingAction(id);
+    if (row && row.status !== "pending") return row;
+    await new Promise((r) => setTimeout(r, 2_000));
+  }
+  return undefined;
 }
 
 function day(d: Date): string {

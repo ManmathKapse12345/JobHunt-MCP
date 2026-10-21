@@ -9,7 +9,7 @@ import {
   recordOutcome,
   type PendingActionRow,
 } from "../repos/pending-actions.js";
-import { ActionError, executeAction } from "./actions.js";
+import { ActionError, type BatchItem, type BatchOutcome, batchItems, executeAction, executeBatch } from "./actions.js";
 import {
   clearedSessionCookie,
   clearLoginFailures,
@@ -101,6 +101,10 @@ export function createApprovalHandler(opts: ApprovalPageOptions): Handler {
       const row = await findWithToken(id, form.get("token") ?? "");
       if (!row) return send(res, 404, notFound());
       const decision = form.get("decision");
+      if (decision === "approve" && row.tool_name === "apply_batch") {
+        const ticked = form.getAll("item").map(Number).filter(Number.isInteger);
+        return send(res, 200, withSignOut(ticked.length ? await approveBatch(row, ticked) : await reject(row)));
+      }
       if (decision === "approve") return send(res, 200, withSignOut(await approve(row)));
       if (decision === "reject") return send(res, 200, withSignOut(await reject(row)));
       return send(res, 400, page("Bad request", "<p>Unknown decision.</p>"));
@@ -197,6 +201,35 @@ async function approve(row: PendingActionRow): Promise<string> {
   }
 }
 
+// Only the ticked items. Claim + apply + record in one transaction; each item has its own
+// savepoint (executeBatch), so one that no longer applies doesn't undo the others.
+async function approveBatch(row: PendingActionRow, ticked: number[]): Promise<string> {
+  try {
+    const done = await withTransaction(async (client) => {
+      const claimed = await claimPendingAction(client, row.id, "approved");
+      if (!claimed) return undefined;
+      const outcome = await executeBatch(client, claimed.payload, "user via approval link", ticked);
+      await recordOutcome(client, row.id, { result: outcome });
+      return outcome;
+    });
+    if (done === undefined) return alreadyDecided(row.id);
+    return page("Approved", `<p class="ok">${esc(done.message)}</p>${outcomeList(done.items)}<p>You can close this tab.</p>`);
+  } catch (err) {
+    if (!(err instanceof ActionError)) throw err;
+    await withTransaction(async (client) => {
+      if (await claimPendingAction(client, row.id, "approved")) await recordOutcome(client, row.id, { error: err.message });
+    });
+    return page("Could not apply", `<p class="bad">${esc(err.message)}</p><p>Nothing was changed.</p>`);
+  }
+}
+
+function outcomeList(items: BatchOutcome[]): string {
+  const label = { applied: "Applied", failed: "Not applied", skipped: "Skipped" } as const;
+  return `<ul class="items">${items
+    .map((it) => `<li><strong class="${it.outcome === "failed" ? "bad" : it.outcome === "applied" ? "ok" : ""}">${label[it.outcome]}</strong> ${esc(it.summary)}${it.outcome === "failed" ? `<br><span class="meta">${esc(it.message)}</span>` : ""}</li>`)
+    .join("")}</ul>`;
+}
+
 async function reject(row: PendingActionRow): Promise<string> {
   const claimed = await withTransaction((client) => claimPendingAction(client, row.id, "rejected"));
   if (!claimed) return alreadyDecided(row.id);
@@ -214,12 +247,14 @@ async function alreadyDecided(id: string): Promise<string> {
 function showAction(row: PendingActionRow, token: string): string {
   const meta = `<p class="meta">${esc(row.tool_name)} · requested ${row.created_at.toISOString()} · expires ${row.expires_at.toISOString()}</p>`;
   if (row.status !== "pending") {
-    const outcome = row.error ? `<p class="bad">${esc(row.error)}</p>` : "";
+    const items = (row.result as { items?: BatchOutcome[] } | null)?.items;
+    const outcome = row.error ? `<p class="bad">${esc(row.error)}</p>` : items ? outcomeList(items) : "";
     return page(
       `Already ${row.status}`,
       `<pre>${esc(row.summary)}</pre>${meta}<p>This change is <strong>${esc(row.status)}</strong>.</p>${outcome}`,
     );
   }
+  if (row.tool_name === "apply_batch") return showBatch(row, token, meta);
   return page(
     "Approve this change?",
     `<pre>${esc(row.summary)}</pre>${meta}
@@ -227,6 +262,33 @@ function showAction(row: PendingActionRow, token: string): string {
        <input type="hidden" name="token" value="${esc(token)}">
        <button name="decision" value="approve" class="approve">Approve</button>
        <button name="decision" value="reject">Reject</button>
+     </form>`,
+  );
+}
+
+// Every item ticked to start with; untick what you don't want. Approving with none ticked
+// is the same as rejecting.
+function showBatch(row: PendingActionRow, token: string, meta: string): string {
+  let items: BatchItem[];
+  try {
+    items = batchItems(row.payload);
+  } catch {
+    return page("Can't show this change", "<p class=\"bad\">The stored batch is invalid. Reject it and propose it again.</p>");
+  }
+  const title = row.summary.split("\n")[0]!;
+  return page(
+    `Approve ${items.length} change${items.length === 1 ? "" : "s"}?`,
+    `<p>${esc(title)}</p>${meta}
+     <form method="post" action="/approve/${row.id}">
+       <input type="hidden" name="token" value="${esc(token)}">
+       <ul class="items">${items
+         .map(
+           (it, i) =>
+             `<li><label><input type="checkbox" name="item" value="${i}" checked> <span>${esc(it.summary)}</span></label></li>`,
+         )
+         .join("")}</ul>
+       <button name="decision" value="approve" class="approve">Apply ticked changes</button>
+       <button name="decision" value="reject">Reject all</button>
      </form>`,
   );
 }
@@ -314,9 +376,11 @@ export function page(title: string, body: string): string {
   input[type=password] { font: inherit; padding: 0.5rem; width: 100%; max-width: 24rem; box-sizing: border-box; border: 1px solid #999; border-radius: 6px; }
   .approve { background: #1a7f37; border-color: #1a7f37; color: #fff; }
   .ok { color: #1a7f37; } .bad { color: #b42318; }
+  ul.items { list-style: none; padding: 0; } ul.items li { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 0.6rem 0.8rem; margin: 0.4rem 0; white-space: pre-wrap; }
+  ul.items label { display: flex; gap: 0.6rem; align-items: baseline; cursor: pointer; }
   .signout { margin-top: 2rem; } .signout button { font-size: 0.85rem; padding: 0.25rem 0.75rem; }
   @media (prefers-color-scheme: dark) {
-    body { background: #161616; color: #eee; } pre { background: #222; border-color: #444; }
+    body { background: #161616; color: #eee; } pre, ul.items li { background: #222; border-color: #444; }
     button, input[type=password] { background: #222; color: #eee; border-color: #555; } .meta { color: #aaa; }
   }
 </style></head>

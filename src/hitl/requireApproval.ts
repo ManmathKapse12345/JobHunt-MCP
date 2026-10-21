@@ -64,6 +64,12 @@ export async function requireApproval(
     }
   }
 
+  return { kind: "pending", ...(await createApprovalLink(prepared)) };
+}
+
+// Store the change in pending_actions and return its one-time link. Also used without an
+// MCP client (npm run gmail:propose).
+export async function createApprovalLink(prepared: Prepared): Promise<{ id: string; url: string; expiresAt: Date }> {
   const token = newToken();
   const row = await insertPendingAction({
     toolName: prepared.toolName,
@@ -72,5 +78,5 @@ export async function requireApproval(
     tokenHash: hashToken(token),
   });
   log.info({ component: "approvals", tool: prepared.toolName, pendingId: row.id, expiresAt: row.expires_at }, "waiting for approval");
-  return { kind: "pending", url: approvalUrl(row.id, token), expiresAt: row.expires_at };
+  return { id: row.id, url: approvalUrl(row.id, token), expiresAt: row.expires_at };
 }
