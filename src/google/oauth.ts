@@ -17,6 +17,9 @@ export const REVOKE_URL = "https://oauth2.googleapis.com/revoke";
 
 // Read-only: the server can never send, delete or change mail.
 export const GMAIL_READONLY = "https://www.googleapis.com/auth/gmail.readonly";
+// Optional (npm run calendar:connect): create events on the user's calendars, and read
+// them to avoid duplicates. Never other calendar settings, never sharing.
+export const CALENDAR_EVENTS = "https://www.googleapis.com/auth/calendar.events";
 
 export interface OAuthClient {
   clientId: string;

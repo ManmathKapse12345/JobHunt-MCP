@@ -1,5 +1,6 @@
 // Connect, check or disconnect the Gmail account the server reads job email from.
 //   npm run gmail:connect      opens Google's consent page; read-only access
+//   npm run calendar:connect   the same, plus permission to add approved events to Calendar
 //   npm run gmail:status
 //   npm run gmail:disconnect   revokes the access at Google and deletes the saved token
 //   npm run gmail:sync [-- --days 90 --max 1000 --label jobs --no-extract --ghost-days 30]
@@ -17,7 +18,8 @@ if (process.argv.includes("--demo")) {
 }
 const { closePools } = await import("../src/db/pool.js");
 const { gmailAuthFromEnv, GmailNotConnected } = await import("../src/google/gmail-auth.js");
-const { buildAuthUrl, GMAIL_READONLY, newPkce, newState, OAuthError } = await import("../src/google/oauth.js");
+const { buildAuthUrl, CALENDAR_EVENTS, GMAIL_READONLY, newPkce, newState, OAuthError } = await import("../src/google/oauth.js");
+const { calendarFromEnv } = await import("../src/google/calendar.js");
 const { startLoopbackReceiver } = await import("../src/google/loopback.js");
 const { env } = await import("../src/config.js");
 const { getGmailConnection } = await import("../src/repos/gmail-connections.js");
@@ -39,13 +41,15 @@ try {
   if (command === "connect") {
     // Check the database first, so a missing table is reported before Google's consent page.
     await auth.status();
+    // --calendar (npm run calendar:connect): also allow adding approved events to Calendar.
+    const withCalendar = process.argv.includes("--calendar");
     const pkce = newPkce();
     const state = newState();
     const receiver = await startLoopbackReceiver(state);
     const url = buildAuthUrl({
       clientId: env.GOOGLE_CLIENT_ID!,
       redirectUri: receiver.redirectUri,
-      scopes: [GMAIL_READONLY],
+      scopes: withCalendar ? [GMAIL_READONLY, CALENDAR_EVENTS] : [GMAIL_READONLY],
       state,
       codeChallenge: pkce.challenge,
     });
@@ -54,7 +58,12 @@ try {
     openBrowser(url);
     const code = await receiver.code;
     const { email, scopes } = await auth.completeConnect({ code, codeVerifier: pkce.verifier, redirectUri: receiver.redirectUri });
-    console.log(`Connected ${email} (read-only). Granted: ${scopes.join(", ")}`);
+    console.log(`Connected ${email} (Gmail read-only). Granted: ${scopes.join(", ")}`);
+    if (scopes.includes(CALENDAR_EVENTS)) {
+      console.log("Calendar: approved interviews, assessments and deadlines can now be added (npm run gmail:propose).");
+    } else if (withCalendar) {
+      console.log('Calendar access was not ticked, so no events will be offered. Run calendar:connect again and tick "See, edit, share... events".');
+    }
   } else if (command === "status") {
     const s = await auth.status();
     console.log(s.connected ? `Connected: ${s.email} since ${s.connectedAt.toISOString()}\nScopes: ${s.scopes.join(", ")}` : "No Gmail account connected.");
@@ -119,12 +128,16 @@ try {
     if (!row) throw new GmailNotConnected("No Gmail account is connected. Run: npm run gmail:connect");
     // From what the last sync stored: no Gmail or model calls here.
     const { opportunities } = selectTracked(await listClassifiedEmails(row.id));
-    const { batch, skipped } = await proposeFromMatches(matchOpportunities(opportunities, await listAllApplications()));
+    const { batch, skipped, calendarNote } = await proposeFromMatches(
+      matchOpportunities(opportunities, await listAllApplications()),
+      { calendar: await calendarFromEnv() },
+    );
     if (skipped.length) {
       console.log(`Not proposed (${skipped.length}):`);
       for (const s of skipped) console.log(`  ${s.organization}: ${s.reason}`);
       console.log();
     }
+    if (calendarNote) console.log(`${calendarNote}\n`);
     if (!batch) {
       console.log("Nothing to change: your tracker already matches your job emails. (Run gmail:sync first for new ones.)");
     } else {

@@ -17,6 +17,8 @@ import {
 import { insertAuditEvent } from "../repos/events.js";
 import { writePool } from "../db/pool.js";
 import { setAuditContext } from "../db/tx.js";
+import { type CalendarClient, type CalendarEvent, calendarFromEnv } from "../google/calendar.js";
+import { OAuthError } from "../google/oauth.js";
 
 // Every write goes through two steps:
 //   prepare(input) -> { payload, summary }   checks the input against the database NOW and
@@ -273,11 +275,61 @@ const applyDelete = defineAction(DeletePayload, async (client, p, actor) => {
   return `Deleted ${describe(app)}.`;
 });
 
+// ---------- add_calendar_event ----------
+// Not a database change: the event goes to the user's Google Calendar. Its id comes from
+// the email it was read from, so approving it twice adds it once.
+
+const CalendarPayload = z.object({
+  id: z.string().regex(/^[a-v0-9]{5,1024}$/),
+  title: z.string().min(1).max(200),
+  start: z.iso.datetime({ offset: true }),
+  end: z.iso.datetime({ offset: true }),
+  description: z.string().max(2000),
+  remindMinutesBefore: z.array(z.number().int().min(0).max(40_320)).max(5),
+});
+
+let calendar: () => Promise<CalendarClient | undefined> = calendarFromEnv;
+// Tests use a fake calendar.
+export function useCalendar(provider: () => Promise<CalendarClient | undefined>) {
+  calendar = provider;
+}
+
+const whenFmt = (d: Date) =>
+  d.toLocaleString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+
+export function prepareCalendarEvent(e: CalendarEvent): Prepared {
+  const payload: z.infer<typeof CalendarPayload> = {
+    id: e.id,
+    title: e.title,
+    start: e.start.toISOString(),
+    end: e.end.toISOString(),
+    description: e.description,
+    remindMinutesBefore: e.remindMinutesBefore,
+  };
+  return {
+    toolName: "add_calendar_event",
+    payload,
+    summary: `Add to your calendar: "${e.title}", ${whenFmt(e.start)} to ${e.end.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}.`,
+  };
+}
+
+const applyCalendarEvent = defineAction(CalendarPayload, async (_client, p) => {
+  const cal = await calendar();
+  if (!cal) throw new ActionError("Calendar isn't connected (npm run calendar:connect), so the event was not added.");
+  try {
+    const r = await cal.insert({ ...p, start: new Date(p.start), end: new Date(p.end) });
+    return r === "exists" ? `"${p.title}" is already on your calendar.` : `Added "${p.title}" to your calendar.`;
+  } catch (err) {
+    if (err instanceof OAuthError) throw new ActionError(err.message);
+    throw err;
+  }
+});
+
 // ---------- apply_batch: several changes, approved together ----------
 // The human ticks which items to apply. Each runs behind its own savepoint, so one that
 // no longer applies (changed meanwhile, now a duplicate) is undone alone and the rest stay.
 
-const BATCHABLE = ["add_application", "update_application_status", "update_application"] as const;
+const BATCHABLE = ["add_application", "update_application_status", "update_application", "add_calendar_event"] as const;
 export const MAX_BATCH_ITEMS = 100;
 
 const BatchPayload = z.object({
@@ -357,6 +409,7 @@ const APPLY: Record<string, Apply> = {
   update_application_status: applyStatusChange,
   update_application: applyUpdate,
   delete_application: applyDelete,
+  add_calendar_event: applyCalendarEvent,
   // Approved as a whole (an elicitation yes/no): every item.
   apply_batch: async (client, payload, actor) => (await executeBatch(client, payload, actor)).message,
 };

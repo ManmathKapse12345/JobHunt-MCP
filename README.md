@@ -95,7 +95,7 @@ The demo database lives in memory: `npm run db:down` deletes it, and `npm run de
 | Write tool | `update_application` | Edit role, URL, source, notes, date | **Yes** |
 | Write tool | `delete_application` | Soft-delete one application | **Yes** |
 | Gmail tool | `sync_job_emails` | New job emails next to the tracker: status the emails show, upcoming interviews, who hasn't replied | No: never writes the tracker |
-| Gmail tool | `propose_email_updates` | The changes those emails imply, in one approval with a checkbox per change | **Yes** |
+| Gmail tool | `propose_email_updates` | The changes those emails imply (and calendar events for upcoming interviews and deadlines), in one approval with a checkbox per change | **Yes** |
 | Utility | `ping`, `days_since` | Health check, date arithmetic | No |
 | Resources | `jobhunt://pipeline`, `jobhunt://applications/{id}` | The same data, attachable as context | No |
 | Prompt | `weekly_followups(days, tone)` | Lists quiet applications and drafts follow-up messages | No |

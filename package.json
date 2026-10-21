@@ -22,6 +22,7 @@
     "demo:db": "npm run db:up && tsx scripts/demo-seed.ts",
     "demo:show": "tsx scripts/show.ts --demo",
     "gmail:connect": "tsx scripts/gmail.ts connect",
+    "calendar:connect": "tsx scripts/gmail.ts connect --calendar",
     "gmail:status": "tsx scripts/gmail.ts status",
     "gmail:disconnect": "tsx scripts/gmail.ts disconnect",
     "gmail:sync": "tsx scripts/gmail.ts sync",

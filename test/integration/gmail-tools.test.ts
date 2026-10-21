@@ -38,7 +38,7 @@ const extractor: Extractor = {
 };
 
 async function connect(elicitation: boolean, deps: Partial<GmailDeps> = {}) {
-  mcp = await connectClient({ elicitation, gmail: { source: inbox, extractor: () => extractor, ...deps } });
+  mcp = await connectClient({ elicitation, gmail: { source: inbox, extractor: () => extractor, calendar: async () => undefined, ...deps } });
 }
 
 beforeEach(async () => {

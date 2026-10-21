@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { env } from "../config.js";
 import { selectTracked } from "../google/classify.js";
+import { type CalendarClient, calendarFromEnv } from "../google/calendar.js";
 import { createGeminiExtractor, type Extractor } from "../google/extract.js";
 import { gmailAuthFromEnv } from "../google/gmail-auth.js";
 import { createGmailApiSource, type GmailSource } from "../google/gmail-source.js";
@@ -25,10 +26,13 @@ import { runWithApproval } from "./write/run-with-approval.js";
 export interface GmailDeps {
   source: () => GmailSource;
   extractor: () => Extractor | undefined;
+  // undefined: Calendar access not granted, so no events are offered.
+  calendar: () => Promise<CalendarClient | undefined>;
 }
 
 export const defaultGmailDeps: GmailDeps = {
   source: () => createGmailApiSource(gmailAuthFromEnv()),
+  calendar: calendarFromEnv,
   extractor: () => (env.GEMINI_API_KEY ? createGeminiExtractor({ apiKey: env.GEMINI_API_KEY, model: env.EXTRACT_MODEL }) : undefined),
 };
 
@@ -103,7 +107,9 @@ export function registerGmailTools(server: McpServer, deps: GmailDeps = defaultG
       title: "Propose Updates From Email",
       description:
         "Turn what the synced job emails show into tracker changes: a status change where the emails are " +
-        "further along (e.g. applied -> interview), and an add for each confirmed application not tracked yet. " +
+        "further along (e.g. applied -> interview), an add for each confirmed application not tracked yet, " +
+        "and (if Calendar access was granted) a calendar event for each upcoming interview, assessment or deadline " +
+        "that isn't on the calendar yet. " +
         "Ambiguous ones are listed, never guessed. All changes go to the user in ONE approval with a checkbox " +
         "per change; nothing is saved until they approve. Run sync_job_emails first for new emails. " +
         "If the reply contains an approval link, show it to the user.",
@@ -114,12 +120,18 @@ export function registerGmailTools(server: McpServer, deps: GmailDeps = defaultG
       const row = await getGmailConnection();
       if (!row) return notConnected();
       const { opportunities } = selectTracked(await listClassifiedEmails(row.id));
-      const { batch, skipped } = await proposeFromMatches(matchOpportunities(opportunities, await listAllApplications()));
-      const notProposed = skipped.length
-        ? `Not proposed (${skipped.length}):\n${skipped.map((s) => `- ${oneLine(s.organization)}: ${s.reason}`).join("\n")}`
-        : "";
+      const { batch, skipped, calendarNote } = await proposeFromMatches(
+        matchOpportunities(opportunities, await listAllApplications()),
+        { calendar: await deps.calendar() },
+      );
+      const notProposed = [
+        skipped.length ? `Not proposed (${skipped.length}):\n${skipped.map((s) => `- ${oneLine(s.organization)}: ${s.reason}`).join("\n")}` : "",
+        calendarNote ?? "",
+      ]
+        .filter(Boolean)
+        .join("\n");
       if (!batch) {
-        return text(["Nothing to change: the tracker already matches the job emails.", notProposed].filter(Boolean).join("\n\n"));
+        return text(["Nothing to change: the tracker and calendar already match the job emails.", notProposed].filter(Boolean).join("\n\n"));
       }
       const result = await runWithApproval(server, extra.requestId, async () => batch);
       const note = { type: "text" as const, text: [UNTRUSTED, notProposed].filter(Boolean).join("\n\n") };

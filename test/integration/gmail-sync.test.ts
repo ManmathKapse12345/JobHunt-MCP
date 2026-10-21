@@ -170,7 +170,7 @@ describe("syncJobEmails", () => {
       const r = await syncJobEmails(inbox, connectionId, { extractor });
       const initech = r.tracking.opportunities.find((o) => o.organization === "Initech")!;
       expect(initech).toMatchObject({ role: "Full Stack Intern", kind: "internship" });
-      expect(initech.dates).toEqual([{ at: new Date("2026-10-23T09:30:00Z"), what: "event", category: "interview" }]);
+      expect(initech.dates).toEqual([{ at: new Date("2026-10-23T09:30:00Z"), what: "event", category: "interview", emailId: "18f0c3" }]);
     });
 
     it("stops at maxExtract and leaves the rest for next time", async () => {

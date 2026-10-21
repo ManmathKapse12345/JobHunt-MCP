@@ -7,23 +7,74 @@
 // one approval link, one checkbox per change.
 
 import { localIsoDate } from "../dates.js";
-import { ActionError, prepareAdd, prepareBatch, prepareStatusChange, type Prepared } from "../hitl/actions.js";
+import {
+  ActionError,
+  prepareAdd,
+  prepareBatch,
+  prepareCalendarEvent,
+  prepareStatusChange,
+  type Prepared,
+} from "../hitl/actions.js";
+import { type CalendarClient, type CalendarEvent, eventIdFor } from "./calendar.js";
+import { orgKey } from "./classify.js";
+import { OAuthError } from "./oauth.js";
 import type { OpportunityMatch } from "./match.js";
 
 export interface Proposals {
   batch: Prepared | null; // null: nothing to change
   skipped: Array<{ organization: string; reason: string }>;
+  // Set when upcoming dates weren't offered for the calendar, and why.
+  calendarNote?: string;
 }
+
+export interface ProposeOptions {
+  // The user's calendar, when Calendar access was granted: upcoming interviews,
+  // assessments and deadlines are then offered as events too.
+  calendar?: CalendarClient;
+  now?: Date;
+}
+
+// How long an event lasts, and when to be reminded (minutes before it starts).
+const EVENT_MINUTES = 60;
+const DEADLINE_MINUTES = 30; // a slot that ends at the deadline
+const REMIND = { event: [24 * 60, 60], deadline: [24 * 60, 120] };
+// Anything already on the calendar this close, for the same organisation, counts as it.
+const SAME_EVENT_WINDOW_MS = 3 * 3_600_000;
 
 // What add_application stores when no email named the role (rules only, or the extractor
 // found none). Edit it afterwards with update_application.
 export const UNKNOWN_ROLE = "Role not stated";
 
-export async function proposeFromMatches(matches: OpportunityMatch[]): Promise<Proposals> {
-  // Changes to what you already track first, then new applications.
+export async function proposeFromMatches(matches: OpportunityMatch[], opts: ProposeOptions = {}): Promise<Proposals> {
+  // Changes to what you already track first, then new applications, then calendar events.
   const changes: Prepared[] = [];
   const adds: Prepared[] = [];
+  const events: Prepared[] = [];
   const skipped: Proposals["skipped"] = [];
+  const now = opts.now ?? new Date();
+  const upcoming = matches
+    .flatMap((m) => m.opportunity.dates.filter((d) => d.at > now).map((d) => ({ m, d })))
+    .sort((a, b) => a.d.at.getTime() - b.d.at.getTime()); // soonest first
+  let calendarNote: string | undefined;
+  if (upcoming.length && !opts.calendar) {
+    calendarNote = `${upcoming.length} upcoming interview/assessment date(s) weren't offered for your calendar: run npm run calendar:connect to allow that.`;
+  }
+  if (opts.calendar) {
+    try {
+      for (const { m, d } of upcoming) {
+        const e = calendarEventFor(m, d);
+        if (await alreadyOnCalendar(opts.calendar, e, m.opportunity.organization)) {
+          skipped.push({ organization: m.opportunity.organization, reason: `"${e.title}" is already on your calendar around then` });
+        } else events.push(prepareCalendarEvent(e));
+      }
+    } catch (err) {
+      // Can't check for duplicates: offer no events rather than risk doubles. The tracker
+      // changes still go ahead.
+      if (!(err instanceof OAuthError)) throw err;
+      events.length = 0;
+      calendarNote = `Calendar events weren't offered: ${err.message}`;
+    }
+  }
   for (const m of matches) {
     const org = m.opportunity.organization;
     try {
@@ -62,9 +113,40 @@ export async function proposeFromMatches(matches: OpportunityMatch[]): Promise<P
       skipped.push({ organization: org, reason: err.message });
     }
   }
-  const items = [...changes, ...adds];
+  const items = [...changes, ...adds, ...events];
   const n = items.length;
-  return { batch: n ? prepareBatch(`${n} change${n === 1 ? "" : "s"} from your job emails:`, items) : null, skipped };
+  return { batch: n ? prepareBatch(`${n} change${n === 1 ? "" : "s"} from your job emails:`, items) : null, skipped, calendarNote };
+}
+
+type DateOf = OpportunityMatch["opportunity"]["dates"][number];
+
+export function calendarEventFor(m: OpportunityMatch, d: DateOf): CalendarEvent {
+  const o = m.opportunity;
+  const role = m.application?.role ?? o.role;
+  const name = `${o.organization}${role && role !== UNKNOWN_ROLE ? ` (${role})` : ""}`;
+  const kind = d.category === "assessment" ? "Assessment" : d.category === "interview" ? "Interview" : o.kind === "competition" ? "Round" : "Event";
+  const [start, end] =
+    d.what === "event"
+      ? [d.at, new Date(d.at.getTime() + EVENT_MINUTES * 60_000)]
+      : [new Date(d.at.getTime() - DEADLINE_MINUTES * 60_000), d.at];
+  return {
+    id: eventIdFor(d.emailId, d.what, d.at),
+    title: d.what === "event" ? `${kind}: ${name}` : `Deadline: ${name}`,
+    start,
+    end,
+    description:
+      `Added by jobhunt-mcp, with your approval, from ${/^[aeiou]/.test(d.category) ? "an" : "a"} ${d.category} email received ${localIsoDate(o.emails.find((e) => e.id === d.emailId)?.receivedAt ?? o.confirmedAt)}.\n` +
+      "The time was read from the email automatically: check that email for the exact time and the link.",
+    remindMinutesBefore: REMIND[d.what],
+  };
+}
+
+// Gmail adds real calendar invites itself, and you may have added it by hand: anything
+// near that time that names the organisation (or is this very event) counts.
+async function alreadyOnCalendar(cal: CalendarClient, e: CalendarEvent, organization: string): Promise<boolean> {
+  const around = await cal.eventsBetween(new Date(e.start.getTime() - SAME_EVENT_WINDOW_MS), new Date(e.end.getTime() + SAME_EVENT_WINDOW_MS));
+  const key = orgKey(organization);
+  return around.some((x) => x.id === e.id || (key.length >= 3 && orgKey(`${x.title} ${x.description}`).includes(key)));
 }
 
 // The job site a confirmation came through: what the tracker calls "source".

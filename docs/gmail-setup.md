@@ -74,6 +74,22 @@ Each tracked opportunity is also shown next to your tracker, without changing an
 
 Then **No reply yet** lists the applications with no assessment, interview, offer or rejection, by days since the last email. After 30 days they're marked *ghosted* (`--ghost-days 21` to change it). Ghosted is only a report: it never changes a status and never counts as a rejection. Hackathons and competitions aren't listed.
 
+### Interviews and deadlines on your calendar (optional)
+
+`gmail:propose` (and `propose_email_updates` in Claude) can also offer each **upcoming** interview, assessment or deadline that Gemini read from a tracked email as a Google Calendar event: one more checkbox on the same approval page. Nothing is added unless you tick it.
+
+One-time setup:
+
+1. In Google Cloud, **APIs & Services → Library → Google Calendar API → Enable** (same project as the Gmail client).
+2. `npm run calendar:connect`, and on Google's page tick the Calendar permission too. Gmail stays read-only; the new permission only lets the server add events (and look at nearby ones to avoid duplicates).
+
+What gets offered:
+
+- an interview or scheduled assessment: a 1-hour event at that time, reminders a day and an hour before;
+- a deadline: a 30-minute slot ending at it, reminders a day and 2 hours before.
+
+Titles look like *Interview: Acme Robotics (Software Engineer Intern)*. The description says it came from a job email; no email text is copied in. Not offered: past dates, and anything where your calendar already has an event naming that company within 3 hours (Gmail adds real invites itself). Each event's id comes from its email, so approving the same one twice adds it once. Without Calendar access, `gmail:propose` just says how many dates it could have added.
+
 ### Past applications from LinkedIn
 
 Applications older than your inbox, or without a confirmation email, can come from LinkedIn's own export: **Settings → Data privacy → Get a copy of your data**, tick **Job applications**, **Request archive**. LinkedIn emails a download link (it can take up to a day). Unzip it, then:

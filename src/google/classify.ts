@@ -171,7 +171,7 @@ export interface Opportunity {
   kind: OpportunityKind | null; // the rules' guess from subjects, else the extractor's
   role: string | null; // the first role the extractor found
   // The interviews, assessments and deadlines the emails mention, oldest first.
-  dates: Array<{ at: Date; what: "event" | "deadline"; category: EmailCategory }>;
+  dates: Array<{ at: Date; what: "event" | "deadline"; category: EmailCategory; emailId: string }>;
   confirmedAt: Date; // the earliest confirmation
   emails: ClassifiedEmail[]; // oldest first: the confirmation(s), then what followed
 }
@@ -234,8 +234,8 @@ export function selectTracked(emails: ClassifiedEmail[]): TrackingResult {
       if (!x) continue;
       o.role ??= x.role;
       o.kind ??= x.kind;
-      if (x.eventAt) o.dates.push({ at: x.eventAt, what: "event", category: e.category });
-      if (x.deadlineAt) o.dates.push({ at: x.deadlineAt, what: "deadline", category: e.category });
+      if (x.eventAt) o.dates.push({ at: x.eventAt, what: "event", category: e.category, emailId: e.id });
+      if (x.deadlineAt) o.dates.push({ at: x.deadlineAt, what: "deadline", category: e.category, emailId: e.id });
     }
     o.dates.sort((a, b) => a.at.getTime() - b.at.getTime());
   }
