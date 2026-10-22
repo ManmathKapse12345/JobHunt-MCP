@@ -5,9 +5,9 @@
 ![MCP](https://img.shields.io/badge/MCP-stdio%20%2B%20Streamable%20HTTP-black)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-<!-- LIVE-LINK: once deployed, replace this comment with:
+[<!-- LIVE-LINK: once deployed, replace this comment with:
 **Live server:** https://<service>.onrender.com/healthz · MCP endpoint `/mcp` (bearer token)
--->
+-->](https://jobhunt-mcp.onrender.com)
 
 An [MCP](https://modelcontextprotocol.io) server that lets AI assistants (Claude Desktop, Cursor, Claude Code) read and manage a job-application tracker in Postgres, where **the AI can propose a change, but only a human can apply it.** It can also read your job email (Gmail, read-only), work out what changed, and put upcoming interviews on your calendar, all behind the same approval step.
 
